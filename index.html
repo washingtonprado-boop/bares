@@ -297,7 +297,21 @@ function Login({config, tables, waiters, setUser, setView}) {
                                     if (t.status === 'livre') {
                                         setAsk(true);
                                     } else {
-                                        alert('❌ Esta mesa já está ocupada!');
+                                        // Mesa ocupada - mostrar mensagem amigável antes de pedir senha
+                                        if (confirm('⚠️ MESA OCUPADA\n\nEsta mesa já está em uso.\n\n📱 Se esta é SUA mesa, clique em OK para inserir sua senha.\n\n❌ Se não é sua mesa, clique em CANCELAR.')) {
+                                            const senha = prompt('🔐 Digite a senha de 4 dígitos da sua mesa:');
+                                            if (!senha) return;
+                                            
+                                            if (t.customerPin && senha === t.customerPin) {
+                                                // Senha correta
+                                                sessionStorage.setItem('tableId', mesa);
+                                                sessionStorage.setItem('customerPin', senha);
+                                                setUser({tableId: parseInt(mesa)});
+                                                setView('customer');
+                                            } else {
+                                                alert('❌ Senha incorreta!\n\nEsta mesa pertence a outro cliente.\nSolicite ajuda ao garçom.');
+                                            }
+                                        }
                                     }
                                 }
                             }}
@@ -310,18 +324,20 @@ function Login({config, tables, waiters, setUser, setView}) {
                             if (t.status === 'livre') {
                                 setAsk(true);
                             } else {
-                                // Mesa ocupada - pedir senha
-                                const senha = prompt('Mesa ocupada! Digite a senha de 4 dígitos:');
-                                if (!senha) return;
-                                
-                                if (t.customerPin && senha === t.customerPin) {
-                                    // Senha correta
-                                    sessionStorage.setItem('tableId', mesa);
-                                    sessionStorage.setItem('customerPin', senha);
-                                    setUser({tableId: parseInt(mesa)});
-                                    setView('customer');
-                                } else {
-                                    alert('❌ Senha incorreta! Esta mesa está ocupada.');
+                                // Mesa ocupada - mostrar mensagem amigável antes de pedir senha
+                                if (confirm('⚠️ MESA OCUPADA\n\nEsta mesa já está em uso.\n\n📱 Se esta é SUA mesa, clique em OK para inserir sua senha.\n\n❌ Se não é sua mesa, clique em CANCELAR.')) {
+                                    const senha = prompt('🔐 Digite a senha de 4 dígitos da sua mesa:');
+                                    if (!senha) return;
+                                    
+                                    if (t.customerPin && senha === t.customerPin) {
+                                        // Senha correta
+                                        sessionStorage.setItem('tableId', mesa);
+                                        sessionStorage.setItem('customerPin', senha);
+                                        setUser({tableId: parseInt(mesa)});
+                                        setView('customer');
+                                    } else {
+                                        alert('❌ Senha incorreta!\n\nEsta mesa pertence a outro cliente.\nSolicite ajuda ao garçom.');
+                                    }
                                 }
                             }
                         }} style={{width:'100%',padding:'1.3rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>ACESSAR</button>
