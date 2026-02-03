@@ -3,15 +3,256 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema Bar Completo</title>
+    <meta name="theme-color" content="#d4a574">
+    <title>Sistema de Gestão - Bar Premium</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --primary: #d4a574;
+            --primary-dark: #b8915f;
+            --primary-light: #e8c9a0;
+            --secondary: #1a1a1a;
+            --accent: #4a9d4e;
+            --danger: #e74c3c;
+            --warning: #f39c12;
+            --info: #3498db;
+            --background: #0f0f0f;
+            --surface: #1a1a1a;
+            --surface-light: #2a2a2a;
+            --text: #ffffff;
+            --text-secondary: #888888;
+            --border: #333333;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+        
+        body {
+            font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--background);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        /* Scrollbar personalizada */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--secondary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 5px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-dark);
+        }
+        
+        /* Animações */
+        @keyframes fadeIn {
+            from { 
+                opacity: 0; 
+                transform: translateY(20px); 
+            }
+            to { 
+                opacity: 1; 
+                transform: translateY(0); 
+            }
+        }
+        
+        @keyframes slideIn {
+            from { 
+                transform: translateX(-100%); 
+            }
+            to { 
+                transform: translateX(0); 
+            }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { 
+                transform: scale(1); 
+            }
+            50% { 
+                transform: scale(1.05); 
+            }
+        }
+        
+        @keyframes shine {
+            0% { 
+                background-position: -200% center; 
+            }
+            100% { 
+                background-position: 200% center; 
+            }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        .slide-in {
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        /* Gradient text */
+        .gradient-text {
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        /* Glass morphism */
+        .glass {
+            background: rgba(26, 26, 26, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Botões modernos */
+        .btn {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+        
+        .btn:hover::before {
+            left: 100%;
+        }
+        
+        .btn:active {
+            transform: scale(0.98);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: #000;
+            box-shadow: 0 4px 15px rgba(212, 165, 116, 0.3);
+        }
+        
+        .btn-primary:hover {
+            box-shadow: 0 6px 20px rgba(212, 165, 116, 0.4);
+            transform: translateY(-2px);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, var(--accent), #45a049);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(74, 157, 78, 0.3);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, var(--danger), #c0392b);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(231, 76, 60, 0.3);
+        }
+        
+        /* Cards modernos */
+        .card {
+            background: var(--surface);
+            border-radius: 16px;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px var(--shadow);
+            border-color: var(--primary);
+        }
+        
+        /* Input moderno */
+        .input {
+            width: 100%;
+            padding: 1rem 1.5rem;
+            background: var(--surface);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            font-size: 1rem;
+            font-family: 'Poppins', sans-serif;
+            transition: all 0.3s ease;
+        }
+        
+        .input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(212, 165, 116, 0.1);
+        }
+        
+        .input::placeholder {
+            color: var(--text-secondary);
+        }
+        
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .badge-primary {
+            background: var(--primary);
+            color: #000;
+        }
+        
+        .badge-success {
+            background: var(--accent);
+            color: #fff;
+        }
+        
+        .badge-danger {
+            background: var(--danger);
+            color: #fff;
+        }
+    </style>
 </head>
-<body style="margin:0;font-family:sans-serif;background:#0a0a0a;color:#fff;">
+<body>
 <div id="root"></div>
 <script type="text/babel">
 
@@ -247,39 +488,194 @@ function Login({config, tables, waiters, setUser, setView}) {
     };
     
     return (
-        <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',background:'#0f0f0f'}}>
-            <div style={{maxWidth:'500px',width:'100%',background:'#1a1a1a',padding:'3rem',borderRadius:'20px',border:'2px solid #333'}}>
-                <div style={{textAlign:'center',marginBottom:'2.5rem'}}>
+        <div className="fade-in" style={{
+            minHeight:'100vh',
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'center',
+            padding:'2rem',
+            background:'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%)',
+            position:'relative',
+            overflow:'hidden'
+        }}>
+            {/* Background decorativo */}
+            <div style={{
+                position:'absolute',
+                top:'-50%',
+                right:'-20%',
+                width:'600px',
+                height:'600px',
+                background:'radial-gradient(circle, rgba(212,165,116,0.05) 0%, transparent 70%)',
+                borderRadius:'50%',
+                pointerEvents:'none'
+            }}></div>
+            <div style={{
+                position:'absolute',
+                bottom:'-30%',
+                left:'-10%',
+                width:'400px',
+                height:'400px',
+                background:'radial-gradient(circle, rgba(74,157,78,0.03) 0%, transparent 70%)',
+                borderRadius:'50%',
+                pointerEvents:'none'
+            }}></div>
+            
+            <div className="glass" style={{
+                maxWidth:'480px',
+                width:'100%',
+                padding:'3rem',
+                borderRadius:'24px',
+                boxShadow:'0 20px 60px rgba(0,0,0,0.5)',
+                position:'relative',
+                zIndex:1
+            }}>
+                {/* Logo e Nome do Bar */}
+                <div style={{textAlign:'center',marginBottom:'3rem'}}>
                     {config.logo ? (
-                        <div style={{marginBottom:'1.5rem'}}>
-                            <img src={config.logo} alt={config.barName} style={{maxWidth:'300px',height:'200px'}} />
+                        <div style={{
+                            marginBottom:'1.5rem',
+                            background:'rgba(212,165,116,0.05)',
+                            padding:'1.5rem',
+                            borderRadius:'20px',
+                            display:'inline-block'
+                        }}>
+                            <img src={config.logo} alt={config.barName} style={{
+                                maxWidth:'280px',
+                                height:'auto',
+                                maxHeight:'180px',
+                                objectFit:'contain',
+                                filter:'drop-shadow(0 4px 10px rgba(212,165,116,0.3))'
+                            }} />
                         </div>
                     ) : (
-                        <div style={{fontSize:'5rem',marginBottom:'1rem'}}>🍺</div>
+                        <div style={{
+                            fontSize:'5rem',
+                            marginBottom:'1rem',
+                            filter:'drop-shadow(0 4px 10px rgba(212,165,116,0.3))'
+                        }}>🍺</div>
                     )}
-                    <h1 style={{fontSize:'2.5rem',marginBottom:'0.5rem',background:'linear-gradient(135deg,#d4a574,#8B4513)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',fontWeight:'900'}}>{config.barName}</h1>
+                    <h1 className="gradient-text" style={{
+                        fontSize:'2.5rem',
+                        marginBottom:'0.5rem',
+                        fontWeight:'900',
+                        letterSpacing:'-0.5px'
+                    }}>{config.barName}</h1>
+                    <p style={{
+                        color:'var(--text-secondary)',
+                        fontSize:'0.95rem',
+                        fontWeight:'500'
+                    }}>Sistema de Gestão</p>
                 </div>
                 
-                <div style={{display:'flex',gap:'1rem',marginBottom:'2rem'}}>
-                    <button onClick={() => {setMode('staff');setAsk(false);}} style={{flex:1,padding:'1rem',background:mode==='staff'?'#d4a574':'#2a2a2a',border:'none',borderRadius:'10px',color:mode==='staff'?'#000':'#888',fontWeight:'800',cursor:'pointer'}}>👑 STAFF</button>
-                    <button onClick={() => {setMode('customer');setAsk(false);}} style={{flex:1,padding:'1rem',background:mode==='customer'?'#4a9d4e':'#2a2a2a',border:'none',borderRadius:'10px',color:mode==='customer'?'#fff':'#888',fontWeight:'800',cursor:'pointer'}}>👥 CLIENTE</button>
+                {/* Tabs de seleção */}
+                <div style={{
+                    display:'grid',
+                    gridTemplateColumns:'1fr 1fr',
+                    gap:'0.75rem',
+                    marginBottom:'2.5rem',
+                    padding:'0.5rem',
+                    background:'var(--surface)',
+                    borderRadius:'14px'
+                }}>
+                    <button 
+                        onClick={() => {setMode('staff');setAsk(false);}} 
+                        className={mode==='staff' ? 'btn-primary' : ''}
+                        style={{
+                            padding:'1rem',
+                            background:mode==='staff' ? 'linear-gradient(135deg, var(--primary), var(--primary-dark))' : 'transparent',
+                            border:'none',
+                            borderRadius:'10px',
+                            color:mode==='staff' ? '#000' : 'var(--text-secondary)',
+                            fontWeight:'700',
+                            fontSize:'0.95rem',
+                            cursor:'pointer',
+                            transition:'all 0.3s ease',
+                            boxShadow: mode==='staff' ? '0 4px 15px rgba(212,165,116,0.3)' : 'none'
+                        }}
+                    >
+                        👑 EQUIPE
+                    </button>
+                    <button 
+                        onClick={() => {setMode('customer');setAsk(false);}} 
+                        className={mode==='customer' ? 'btn-success' : ''}
+                        style={{
+                            padding:'1rem',
+                            background:mode==='customer' ? 'linear-gradient(135deg, var(--accent), #45a049)' : 'transparent',
+                            border:'none',
+                            borderRadius:'10px',
+                            color:mode==='customer' ? '#fff' : 'var(--text-secondary)',
+                            fontWeight:'700',
+                            fontSize:'0.95rem',
+                            cursor:'pointer',
+                            transition:'all 0.3s ease',
+                            boxShadow: mode==='customer' ? '0 4px 15px rgba(74,157,78,0.3)' : 'none'
+                        }}
+                    >
+                        👥 CLIENTE
+                    </button>
                 </div>
                 
                 {mode === 'staff' && !ask && (
-                    <div>
+                    <div className="slide-in">
                         <PasswordInput 
                             value={pin} 
                             onChange={e => setPin(e.target.value)} 
                             onKeyPress={e => {if (e.key === 'Enter') go();}}
-                            placeholder="PIN" 
+                            placeholder="Digite seu PIN" 
                             maxLength={4} 
-                            style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.3rem',textAlign:'center',marginBottom:'1.5rem'}} 
+                            style={{
+                                width:'100%',
+                                padding:'1.2rem 1.5rem',
+                                background:'var(--surface)',
+                                border:'2px solid var(--border)',
+                                borderRadius:'12px',
+                                color:'var(--text)',
+                                fontSize:'1.1rem',
+                                textAlign:'center',
+                                marginBottom:'1.5rem',
+                                letterSpacing:'0.3rem',
+                                fontWeight:'600',
+                                transition:'all 0.3s ease'
+                            }} 
                         />
-                        <button onClick={go} style={{width:'100%',padding:'1.3rem',background:'#d4a574',border:'none',borderRadius:'10px',color:'#000',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>ENTRAR</button>
-                        <div style={{marginTop:'1.5rem',padding:'1rem',background:'#0a0a0a',borderRadius:'10px',fontSize:'0.85rem'}}>
-                            <p style={{color:'#d4a574',margin:'0.3rem 0',fontWeight:'700'}}>Master: 0000</p>
-                            <p style={{color:'#4a9d4e',margin:'0.3rem 0',fontWeight:'700'}}>Admin: 9999</p>
-                            <p style={{color:'#e67e22',margin:'0.3rem 0',fontWeight:'700'}}>Balcão: 8888</p>
+                        <button 
+                            onClick={go} 
+                            className="btn btn-primary"
+                            style={{
+                                width:'100%',
+                                marginBottom:'1.5rem'
+                            }}
+                        >
+                            ENTRAR
+                        </button>
+                        <div style={{
+                            padding:'1.2rem',
+                            background:'rgba(212,165,116,0.05)',
+                            borderRadius:'12px',
+                            border:'1px solid rgba(212,165,116,0.1)'
+                        }}>
+                            <p style={{color:'var(--text-secondary)',fontSize:'0.8rem',marginBottom:'0.8rem',fontWeight:'600',textTransform:'uppercase',letterSpacing:'0.5px'}}>Acessos Rápidos</p>
+                            <div style={{display:'grid',gap:'0.5rem'}}>
+                                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                    <span style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>👑 Master</span>
+                                    <span className="badge badge-primary">0000</span>
+                                </div>
+                                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                    <span style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>⚙️ Admin</span>
+                                    <span className="badge badge-success">9999</span>
+                                </div>
+                                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                    <span style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>💰 Balcão</span>
+                                    <span style={{
+                                        padding:'0.4rem 0.8rem',
+                                        borderRadius:'20px',
+                                        fontSize:'0.85rem',
+                                        fontWeight:'600',
+                                        background:'#e67e22',
+                                        color:'#fff'
+                                    }}>8888</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -2306,6 +2702,54 @@ function Customer({tables, products, config, waiters, setView}) {
     const [cart, setCart] = useState([]);
     const [show, setShow] = useState(false);
     const [tab, setTab] = useState('menu');
+    const [chatMessage, setChatMessage] = useState('');
+    const [showChat, setShowChat] = useState(false);
+    const [unreadMessages, setUnreadMessages] = useState(0);
+    const chatEndRef = useRef(null);
+    
+    // Scroll automático para última mensagem
+    useEffect(() => {
+        if (showChat && chatEndRef.current) {
+            chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [table?.messages, showChat]);
+    
+    // Contar mensagens não lidas
+    useEffect(() => {
+        if (table?.messages) {
+            const unread = table.messages.filter(m => m.from !== 'customer' && !m.read).length;
+            setUnreadMessages(unread);
+        }
+    }, [table?.messages]);
+    
+    // Marcar mensagens como lidas quando abrir chat
+    useEffect(() => {
+        if (showChat && table?.messages && unreadMessages > 0) {
+            const updatedMessages = table.messages.map(m => 
+                m.from !== 'customer' ? {...m, read: true} : m
+            );
+            db.ref(`tables/${tableId}/messages`).set(updatedMessages);
+            setUnreadMessages(0);
+        }
+    }, [showChat]);
+    
+    const sendMessage = () => {
+        if (!chatMessage.trim()) return;
+        
+        const newMessage = {
+            text: chatMessage,
+            from: 'customer',
+            customerName: table.customerName || 'Cliente',
+            timestamp: Date.now(),
+            read: false
+        };
+        
+        const messages = table.messages || [];
+        db.ref(`tables/${tableId}/messages`).set([...messages, newMessage]);
+        
+        setChatMessage('');
+        playSound();
+    };
     
     const callWaiter = () => {
         if (!confirm('Deseja chamar o garçom?')) return;
@@ -2373,6 +2817,26 @@ function Customer({tables, products, config, waiters, setView}) {
             <nav style={{display:'flex',background:'#f5f5f5',borderBottom:'2px solid #e0e0e0',position:'sticky',top:0,zIndex:100}}>
                 <button onClick={() => setTab('menu')} style={{flex:1,padding:'1.2rem',background:tab==='menu'?'#fff':'transparent',border:'none',fontWeight:'800',color:tab==='menu'?'#d4a574':'#666',cursor:'pointer'}}>📋 CARDÁPIO</button>
                 <button onClick={() => setTab('bill')} style={{flex:1,padding:'1.2rem',background:tab==='bill'?'#fff':'transparent',border:'none',fontWeight:'800',color:tab==='bill'?'#d4a574':'#666',cursor:'pointer'}}>🧾 CONTA</button>
+                <button onClick={() => {setTab('chat'); setShowChat(true);}} style={{flex:1,padding:'1.2rem',background:tab==='chat'?'#fff':'transparent',border:'none',fontWeight:'800',color:tab==='chat'?'#3498db':'#666',cursor:'pointer',position:'relative'}}>
+                    💬 CHAT
+                    {unreadMessages > 0 && (
+                        <span style={{
+                            position:'absolute',
+                            top:'8px',
+                            right:'8px',
+                            background:'#e74c3c',
+                            color:'#fff',
+                            borderRadius:'50%',
+                            width:'20px',
+                            height:'20px',
+                            fontSize:'0.7rem',
+                            display:'flex',
+                            alignItems:'center',
+                            justifyContent:'center',
+                            fontWeight:'900'
+                        }}>{unreadMessages}</span>
+                    )}
+                </button>
                 <button onClick={() => setTab('call')} style={{flex:1,padding:'1.2rem',background:tab==='call'?'#fff':'transparent',border:'none',fontWeight:'800',color:tab==='call'?'#f39c12':'#666',cursor:'pointer'}}>🔔 CHAMAR</button>
             </nav>
             
@@ -2570,6 +3034,122 @@ function Customer({tables, products, config, waiters, setView}) {
                                 🔔 CHAMAR GARÇOM
                             </button>
                         )}
+                    </div>
+                )}
+                
+                {tab === 'chat' && (
+                    <div style={{maxWidth:'600px',margin:'0 auto'}}>
+                        <div style={{textAlign:'center',padding:'2rem 0 1rem'}}>
+                            <div style={{fontSize:'3rem',marginBottom:'1rem'}}>💬</div>
+                            <h2 style={{fontSize:'1.8rem',fontWeight:'900',marginBottom:'0.5rem',color:'#3498db'}}>Chat com o Balcão</h2>
+                            <p style={{color:'#666',fontSize:'0.9rem'}}>Envie mensagens diretas para o atendimento</p>
+                        </div>
+                        
+                        {/* Área de Mensagens */}
+                        <div style={{
+                            background:'#f5f5f5',
+                            borderRadius:'20px',
+                            padding:'1.5rem',
+                            minHeight:'400px',
+                            maxHeight:'500px',
+                            overflowY:'auto',
+                            marginBottom:'1.5rem',
+                            border:'2px solid #e0e0e0'
+                        }}>
+                            {(!table.messages || table.messages.length === 0) ? (
+                                <div style={{textAlign:'center',padding:'3rem',color:'#999'}}>
+                                    <div style={{fontSize:'3rem',marginBottom:'1rem'}}>📭</div>
+                                    <p>Nenhuma mensagem ainda</p>
+                                    <p style={{fontSize:'0.9rem',marginTop:'0.5rem'}}>Envie uma mensagem para começar!</p>
+                                </div>
+                            ) : (
+                                <div>
+                                    {table.messages.map((msg, idx) => (
+                                        <div 
+                                            key={idx}
+                                            style={{
+                                                display:'flex',
+                                                justifyContent: msg.from === 'customer' ? 'flex-end' : 'flex-start',
+                                                marginBottom:'1rem'
+                                            }}
+                                        >
+                                            <div style={{
+                                                maxWidth:'70%',
+                                                padding:'1rem 1.2rem',
+                                                borderRadius: msg.from === 'customer' ? '20px 20px 5px 20px' : '20px 20px 20px 5px',
+                                                background: msg.from === 'customer' ? 'linear-gradient(135deg, #3498db, #2980b9)' : '#fff',
+                                                color: msg.from === 'customer' ? '#fff' : '#000',
+                                                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                                                wordBreak:'break-word'
+                                            }}>
+                                                {msg.from !== 'customer' && (
+                                                    <div style={{fontSize:'0.75rem',fontWeight:'700',marginBottom:'0.3rem',opacity:0.8}}>
+                                                        {msg.senderName || 'Balcão'}
+                                                    </div>
+                                                )}
+                                                <div style={{fontSize:'0.95rem',marginBottom:'0.3rem'}}>
+                                                    {msg.text}
+                                                </div>
+                                                <div style={{
+                                                    fontSize:'0.7rem',
+                                                    opacity:0.7,
+                                                    textAlign:'right'
+                                                }}>
+                                                    {new Date(msg.timestamp).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div ref={chatEndRef} />
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* Input de Mensagem */}
+                        <div style={{
+                            display:'flex',
+                            gap:'0.8rem',
+                            background:'#fff',
+                            padding:'1rem',
+                            borderRadius:'20px',
+                            border:'2px solid #e0e0e0',
+                            position:'sticky',
+                            bottom:'20px'
+                        }}>
+                            <input 
+                                type="text"
+                                value={chatMessage}
+                                onChange={e => setChatMessage(e.target.value)}
+                                onKeyPress={e => {if (e.key === 'Enter') sendMessage();}}
+                                placeholder="Digite sua mensagem..."
+                                style={{
+                                    flex:1,
+                                    padding:'1rem 1.2rem',
+                                    border:'none',
+                                    background:'#f5f5f5',
+                                    borderRadius:'15px',
+                                    fontSize:'1rem',
+                                    outline:'none'
+                                }}
+                            />
+                            <button 
+                                onClick={sendMessage}
+                                disabled={!chatMessage.trim()}
+                                style={{
+                                    padding:'1rem 1.5rem',
+                                    background: chatMessage.trim() ? 'linear-gradient(135deg, #3498db, #2980b9)' : '#ccc',
+                                    border:'none',
+                                    borderRadius:'15px',
+                                    color:'#fff',
+                                    fontSize:'1.3rem',
+                                    cursor: chatMessage.trim() ? 'pointer' : 'not-allowed',
+                                    transition:'all 0.3s',
+                                    boxShadow: chatMessage.trim() ? '0 4px 15px rgba(52,152,219,0.3)' : 'none'
+                                }}
+                            >
+                                📤
+                            </button>
+                        </div>
                     </div>
                 )}
             </main>
