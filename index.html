@@ -195,7 +195,6 @@ function Login({config, tables, waiters, setUser, setView}) {
     const [mesa, setMesa] = useState('');
     const [nome, setNome] = useState('');
     const [ask, setAsk] = useState(false);
-    const [selectedWaiter, setSelectedWaiter] = useState(null);
     
     // Detectar acesso via QR Code
     useEffect(() => {
@@ -299,61 +298,11 @@ function Login({config, tables, waiters, setUser, setView}) {
                             <h3 style={{color:'#4a9d4e',fontSize:'1.5rem'}}>Mesa {mesa} Livre!</h3>
                         </div>
                         <input type="text" value={nome} onChange={e => setNome(e.target.value)} placeholder="Seu Nome" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1rem'}} />
-                        <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="Senha (4 dígitos)" maxLength="4" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1rem'}} />
+                        <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="Senha (4 dígitos)" maxLength="4" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1.5rem'}} />
                         <p style={{color:'#888',fontSize:'0.85rem',textAlign:'center',marginBottom:'1.5rem'}}>💡 Crie uma senha para acessar sua mesa novamente caso saia do app</p>
                         
-                        {/* SELEÇÃO DE GARÇOM */}
-                        <div style={{marginBottom:'1.5rem'}}>
-                            <h4 style={{color:'#4a9d4e',fontSize:'1.1rem',marginBottom:'1rem',textAlign:'center'}}>👨‍🍳 Escolha seu Garçom</h4>
-                            <div style={{display:'grid',gap:'0.8rem'}}>
-                                {waiters.filter(w => w.active).map(w => (
-                                    <button 
-                                        key={w.id}
-                                        onClick={() => setSelectedWaiter(w.id)}
-                                        style={{
-                                            padding:'1rem',
-                                            background: selectedWaiter === w.id ? '#4a9d4e' : '#0a0a0a',
-                                            border: selectedWaiter === w.id ? '2px solid #4a9d4e' : '2px solid #444',
-                                            borderRadius:'10px',
-                                            color:'#fff',
-                                            fontWeight:'800',
-                                            cursor:'pointer',
-                                            fontSize:'1rem',
-                                            display:'flex',
-                                            alignItems:'center',
-                                            justifyContent:'center',
-                                            gap:'0.5rem',
-                                            transition:'all 0.3s'
-                                        }}
-                                    >
-                                        {selectedWaiter === w.id ? '✓' : '👨‍🍳'} {w.name}
-                                    </button>
-                                ))}
-                                <button 
-                                    onClick={() => setSelectedWaiter(null)}
-                                    style={{
-                                        padding:'1rem',
-                                        background: selectedWaiter === null ? '#4a9d4e' : '#0a0a0a',
-                                        border: selectedWaiter === null ? '2px solid #4a9d4e' : '2px solid #444',
-                                        borderRadius:'10px',
-                                        color:'#fff',
-                                        fontWeight:'800',
-                                        cursor:'pointer',
-                                        fontSize:'1rem',
-                                        display:'flex',
-                                        alignItems:'center',
-                                        justifyContent:'center',
-                                        gap:'0.5rem',
-                                        transition:'all 0.3s'
-                                    }}
-                                >
-                                    {selectedWaiter === null ? '✓' : '🤷'} Sem Preferência
-                                </button>
-                            </div>
-                        </div>
-                        
                         <div style={{display:'flex',gap:'1rem'}}>
-                            <button onClick={() => {setAsk(false); setSelectedWaiter(null);}} style={{flex:1,padding:'1.2rem',background:'#2a2a2a',border:'none',borderRadius:'10px',color:'#888',fontWeight:'800',cursor:'pointer'}}>VOLTAR</button>
+                            <button onClick={() => {setAsk(false);}} style={{flex:1,padding:'1.2rem',background:'#2a2a2a',border:'none',borderRadius:'10px',color:'#888',fontWeight:'800',cursor:'pointer'}}>VOLTAR</button>
                             <button onClick={() => {
                                 if (!nome.trim()) return alert('Digite seu nome!');
                                 if (!pin || pin.length !== 4) return alert('Crie uma senha de 4 dígitos!');
@@ -364,11 +313,6 @@ function Login({config, tables, waiters, setUser, setView}) {
                                     customerPin:pin,
                                     openedAt:Date.now()
                                 };
-                                
-                                // Adicionar garçom se selecionado
-                                if (selectedWaiter) {
-                                    updateData.waiter = selectedWaiter;
-                                }
                                 
                                 db.ref(`tables/${mesa}`).update(updateData);
                                 sessionStorage.setItem('tableId', mesa);
