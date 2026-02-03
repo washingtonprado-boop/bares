@@ -616,6 +616,54 @@ function ConfigTab({config}) {
                     <PasswordInput value={d.masterPin} onChange={e => setD({...d, masterPin: e.target.value})} maxLength={4} style={{width:'100%',padding:'1rem',background:'#1a1a1a',border:'1px solid #333',borderRadius:'10px',color:'#fff',fontSize:'1.5rem',textAlign:'center'}} />
                 </div>
                 <button onClick={save} style={{padding:'1.2rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>💾 SALVAR</button>
+                
+                {/* BOTÃO LIMPAR DADOS */}
+                <div style={{marginTop:'2rem',padding:'1.5rem',background:'#2a1a1a',border:'2px solid #e74c3c',borderRadius:'12px'}}>
+                    <h3 style={{color:'#e74c3c',fontSize:'1.3rem',marginBottom:'0.5rem'}}>⚠️ Zona de Perigo</h3>
+                    <p style={{color:'#888',fontSize:'0.9rem',marginBottom:'1rem'}}>Use esta função para limpar TODAS as vendas e resetar as mesas. Ideal para começar o sistema do zero.</p>
+                    <button 
+                        onClick={() => {
+                            if (!confirm('⚠️ ATENÇÃO! Isso vai APAGAR:\n\n• Todas as vendas\n• Todos os pedidos\n• Todas as mesas ocupadas\n\nDeseja continuar?')) return;
+                            
+                            if (!confirm('🚨 ÚLTIMA CONFIRMAÇÃO!\n\nTem CERTEZA que deseja limpar TODOS os dados de vendas?\n\nEsta ação NÃO pode ser desfeita!')) return;
+                            
+                            // Limpar vendas
+                            db.ref('sales').remove();
+                            
+                            // Resetar todas as mesas
+                            const resetTables = {};
+                            for (let i = 1; i <= config.tables; i++) {
+                                resetTables[i] = {
+                                    id: i,
+                                    status: 'livre',
+                                    waiter: null,
+                                    orders: [],
+                                    pending: [],
+                                    total: 0,
+                                    subtotal: 0,
+                                    tip: 0,
+                                    callWaiter: false
+                                };
+                            }
+                            db.ref('tables').set(resetTables);
+                            
+                            alert('✅ Dados limpos com sucesso!\n\n• Vendas apagadas\n• Mesas resetadas\n\nSistema pronto para começar!');
+                        }}
+                        style={{
+                            width:'100%',
+                            padding:'1.2rem',
+                            background:'#e74c3c',
+                            border:'none',
+                            borderRadius:'10px',
+                            color:'#fff',
+                            fontWeight:'800',
+                            cursor:'pointer',
+                            fontSize:'1.1rem'
+                        }}
+                    >
+                        🗑️ LIMPAR TODAS AS VENDAS E RESETAR MESAS
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -2285,11 +2333,6 @@ function Customer({tables, products, config, waiters, setView}) {
                     </div>
                 )}
                 <div style={{background:'#d4a574',padding:'0.5rem 1.5rem',borderRadius:'25px',display:'inline-block',marginBottom:'1rem',color:'#000',fontWeight:'800'}}>MESA {table.id}</div>
-                {table.waiter && (
-                    <div style={{background:'#4a9d4e',padding:'0.5rem 1.5rem',borderRadius:'25px',display:'inline-block',marginBottom:'1rem',color:'#fff',fontWeight:'800',marginLeft:'0.5rem'}}>
-                        👨‍🍳 {waiters.find(w => w.id === table.waiter)?.name || 'Garçom'}
-                    </div>
-                )}
                 {!config.logo && <h1 style={{fontSize:'2rem',marginBottom:'0.5rem'}}>{config.barName}</h1>}
             </header>
             
