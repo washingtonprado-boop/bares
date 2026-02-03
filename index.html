@@ -1,0 +1,2558 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema Bar Completo</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+</head>
+<body style="margin:0;font-family:sans-serif;background:#0a0a0a;color:#fff;">
+<div id="root"></div>
+<script type="text/babel">
+
+const { useState, useEffect, useRef } = React;
+
+const firebaseConfig = {
+    apiKey: "AIzaSyBC2DuHu1P0fKUOJpm_PpWAGiKkEEPyMu8",
+    authDomain: "bares-bae14.firebaseapp.com",
+    databaseURL: "https://bares-bae14-default-rtdb.firebaseio.com",
+    projectId: "bares-bae14",
+    storageBucket: "bares-bae14.firebasestorage.app",
+    messagingSenderId: "581436771219",
+    appId: "1:581436771219:web:b60519997b643b86fc7666"
+};
+
+let db;
+try {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    console.log('✅ Firebase conectado');
+} catch (e) {
+    console.error('❌ Firebase erro:', e);
+}
+
+// Verificar se QRCode está disponível
+setTimeout(() => {
+    if (window.QRCode) {
+        console.log('✅ Biblioteca QRCode carregada');
+    } else {
+        console.error('❌ Biblioteca QRCode não carregada!');
+    }
+}, 1000);
+
+const playSound = () => {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 800;
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.5);
+    } catch(e) {}
+};
+
+const INITIAL_CONFIG = {
+    barName: 'Meu Bar',
+    logo: null,
+    masterPin: '0000',
+    adminPin: '9999',
+    balcaoPin: '8888',
+    currency: 'R$',
+    tables: 12
+};
+
+const INITIAL_PRODUCTS = [
+    {id: 1, name: 'Cerveja', price: 12, image: '🍺', category: 'Bebidas', active: true},
+    {id: 2, name: 'Caipirinha', price: 15, image: '🍹', category: 'Bebidas', active: true},
+    {id: 3, name: 'Batata', price: 28, image: '🍟', category: 'Comidas', active: true},
+];
+
+const INITIAL_WAITERS = [
+    {id: 1, name: 'João', pin: '1234', active: true, sales: 0},
+    {id: 2, name: 'Maria', pin: '2345', active: true, sales: 0},
+];
+
+function PasswordInput({value, onChange, placeholder, style, maxLength}) {
+    const [show, setShow] = useState(false);
+    return (
+        <div style={{position:'relative'}}>
+            <input type={show ? 'text' : 'password'} value={value} onChange={onChange} placeholder={placeholder} maxLength={maxLength} style={style} />
+            <button type="button" onClick={() => setShow(!show)} style={{position:'absolute',right:'1rem',top:'50%',transform:'translateY(-50%)',background:'transparent',border:'none',cursor:'pointer',fontSize:'1.3rem'}}>
+                {show ? '👁️' : '👁️‍🗨️'}
+            </button>
+        </div>
+    );
+}
+
+function App() {
+    const [view, setView] = useState('login');
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [config, setConfig] = useState(INITIAL_CONFIG);
+    const [products, setProducts] = useState([]);
+    const [waiters, setWaiters] = useState([]);
+    const [tables, setTables] = useState([]);
+    const [sales, setSales] = useState([]);
+    const prevTables = useRef([]);
+    
+    useEffect(() => {
+        if (!db) {setLoading(false); return;}
+        
+        db.ref('config').on('value', s => {
+            if (s.val()) setConfig(s.val());
+            else db.ref('config').set(INITIAL_CONFIG);
+        });
+        
+        db.ref('products').on('value', s => {
+            if (s.val()) setProducts(Object.keys(s.val()).map(k => ({...s.val()[k], id: k})));
+            else {
+                const obj = {};
+                INITIAL_PRODUCTS.forEach(p => obj[p.id] = p);
+                db.ref('products').set(obj);
+            }
+        });
+        
+        db.ref('sales').on('value', s => {
+            if (s.val()) {
+                setSales(Object.values(s.val()).sort((a, b) => b.timestamp - a.timestamp));
+            }
+        });
+        
+        db.ref('waiters').on('value', s => {
+            if (s.val()) setWaiters(Object.values(s.val()));
+            else {
+                const obj = {};
+                INITIAL_WAITERS.forEach(w => obj[w.id] = w);
+                db.ref('waiters').set(obj);
+            }
+        });
+        
+        db.ref('tables').on('value', s => {
+            if (s.val()) {
+                const newT = Object.values(s.val());
+                if (prevTables.current.length > 0) {
+                    newT.forEach(nt => {
+                        const ot = prevTables.current.find(t => t.id === nt.id);
+                        if (ot && nt.pending && ot.pending && nt.pending.length > ot.pending.length) {
+                            playSound();
+                        }
+                        // Detectar chamada de garçom
+                        if (ot && nt.callWaiter && !ot.callWaiter) {
+                            playSound();
+                        }
+                    });
+                }
+                prevTables.current = newT;
+                setTables(newT);
+            } else {
+                const obj = {};
+                for (let i = 1; i <= INITIAL_CONFIG.tables; i++) {
+                    obj[i] = {
+                        id: i,
+                        status: 'livre',
+                        waiter: null,
+                        customerName: null,
+                        customerPin: null,
+                        total: 0,
+                        subtotal: 0,
+                        tip: 0,
+                        orders: [],
+                        pending: [],
+                        callWaiter: false
+                    };
+                }
+                db.ref('tables').set(obj);
+            }
+        });
+        
+        setTimeout(() => setLoading(false), 800);
+    }, []);
+    
+    if (loading) return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}><h2 style={{color:'#d4a574'}}>Carregando...</h2></div>;
+    
+    const props = {config, products, waiters, tables, sales, user, setUser, setView};
+    
+    if (view === 'login') return <Login {...props} />;
+    if (view === 'master') return <Master {...props} />;
+    if (view === 'admin') return <Admin {...props} />;
+    if (view === 'balcao') return <Balcao {...props} />;
+    if (view === 'waiter') return <Waiter {...props} />;
+    if (view === 'customer') return <Customer {...props} />;
+}
+
+function Login({config, tables, waiters, setUser, setView}) {
+    const [mode, setMode] = useState('staff');
+    const [pin, setPin] = useState('');
+    const [mesa, setMesa] = useState('');
+    const [nome, setNome] = useState('');
+    const [ask, setAsk] = useState(false);
+    const [selectedWaiter, setSelectedWaiter] = useState(null);
+    
+    // Detectar acesso via QR Code
+    useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const mesaParam = urlParams.get('mesa');
+        
+        if (mesaParam) {
+            // Cliente veio via QR Code
+            setMode('customer');
+            setMesa(mesaParam);
+            
+            // Verificar status da mesa
+            const table = tables.find(t => t.id === parseInt(mesaParam));
+            if (table) {
+                if (table.status === 'livre') {
+                    // Mesa livre, pedir nome
+                    setAsk(true);
+                } else {
+                    // Mesa ocupada, não pode acessar via QR Code
+                    alert('❌ Esta mesa já está ocupada! Por favor, solicite ajuda ao garçom.');
+                    // Limpar URL
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                }
+            }
+        }
+    }, [tables]);
+    
+    const go = () => {
+        if (pin === '0000') {setUser({name:'Master',role:'master'}); setView('master');}
+        else if (pin === '9999') {setUser({name:'Admin',role:'admin'}); setView('admin');}
+        else if (pin === '8888') {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
+        else {
+            const w = waiters.find(x => x.pin === pin && x.active);
+            if (w) {setUser({name:w.name,role:'waiter',waiterId:w.id}); setView('waiter');}
+            else alert('PIN incorreto!');
+        }
+    };
+    
+    return (
+        <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',background:'#0f0f0f'}}>
+            <div style={{maxWidth:'500px',width:'100%',background:'#1a1a1a',padding:'3rem',borderRadius:'20px',border:'2px solid #333'}}>
+                <div style={{textAlign:'center',marginBottom:'2.5rem'}}>
+                    {config.logo ? (
+                        <div style={{marginBottom:'1.5rem'}}>
+                            <img src={config.logo} alt={config.barName} style={{maxWidth:'300px',height:'200px'}} />
+                        </div>
+                    ) : (
+                        <div style={{fontSize:'5rem',marginBottom:'1rem'}}>🍺</div>
+                    )}
+                    <h1 style={{fontSize:'2.5rem',marginBottom:'0.5rem',background:'linear-gradient(135deg,#d4a574,#8B4513)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',fontWeight:'900'}}>{config.barName}</h1>
+                </div>
+                
+                <div style={{display:'flex',gap:'1rem',marginBottom:'2rem'}}>
+                    <button onClick={() => {setMode('staff');setAsk(false);}} style={{flex:1,padding:'1rem',background:mode==='staff'?'#d4a574':'#2a2a2a',border:'none',borderRadius:'10px',color:mode==='staff'?'#000':'#888',fontWeight:'800',cursor:'pointer'}}>👑 STAFF</button>
+                    <button onClick={() => {setMode('customer');setAsk(false);}} style={{flex:1,padding:'1rem',background:mode==='customer'?'#4a9d4e':'#2a2a2a',border:'none',borderRadius:'10px',color:mode==='customer'?'#fff':'#888',fontWeight:'800',cursor:'pointer'}}>👥 CLIENTE</button>
+                </div>
+                
+                {mode === 'staff' && !ask && (
+                    <div>
+                        <PasswordInput value={pin} onChange={e => setPin(e.target.value)} placeholder="PIN" maxLength={4} style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.3rem',textAlign:'center',marginBottom:'1.5rem'}} />
+                        <button onClick={go} style={{width:'100%',padding:'1.3rem',background:'#d4a574',border:'none',borderRadius:'10px',color:'#000',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>ENTRAR</button>
+                        <div style={{marginTop:'1.5rem',padding:'1rem',background:'#0a0a0a',borderRadius:'10px',fontSize:'0.85rem'}}>
+                            <p style={{color:'#d4a574',margin:'0.3rem 0',fontWeight:'700'}}>Master: 0000</p>
+                            <p style={{color:'#4a9d4e',margin:'0.3rem 0',fontWeight:'700'}}>Admin: 9999</p>
+                            <p style={{color:'#e67e22',margin:'0.3rem 0',fontWeight:'700'}}>Balcão: 8888</p>
+                        </div>
+                    </div>
+                )}
+                
+                {mode === 'customer' && !ask && (
+                    <div>
+                        <input type="number" value={mesa} onChange={e => setMesa(e.target.value)} placeholder="Número da Mesa" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.3rem',textAlign:'center',marginBottom:'1.5rem'}} />
+                        <button onClick={() => {
+                            const t = tables.find(x => x.id === parseInt(mesa));
+                            if (!t) {alert('❌ Mesa inválida'); return;}
+                            if (t.status === 'livre') {
+                                setAsk(true);
+                            } else {
+                                // Mesa ocupada - pedir senha
+                                const senha = prompt('Mesa ocupada! Digite a senha de 4 dígitos:');
+                                if (!senha) return;
+                                
+                                if (t.customerPin && senha === t.customerPin) {
+                                    // Senha correta
+                                    sessionStorage.setItem('tableId', mesa);
+                                    sessionStorage.setItem('customerPin', senha);
+                                    setUser({tableId: parseInt(mesa)});
+                                    setView('customer');
+                                } else {
+                                    alert('❌ Senha incorreta! Esta mesa está ocupada.');
+                                }
+                            }
+                        }} style={{width:'100%',padding:'1.3rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>ACESSAR</button>
+                    </div>
+                )}
+                
+                {ask && (
+                    <div>
+                        <div style={{textAlign:'center',marginBottom:'2rem',padding:'1.5rem',background:'rgba(74,157,78,0.1)',borderRadius:'10px'}}>
+                            <div style={{fontSize:'3rem',marginBottom:'0.5rem'}}>🎉</div>
+                            <h3 style={{color:'#4a9d4e',fontSize:'1.5rem'}}>Mesa {mesa} Livre!</h3>
+                        </div>
+                        <input type="text" value={nome} onChange={e => setNome(e.target.value)} placeholder="Seu Nome" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1rem'}} />
+                        <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="Senha (4 dígitos)" maxLength="4" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1rem'}} />
+                        <p style={{color:'#888',fontSize:'0.85rem',textAlign:'center',marginBottom:'1.5rem'}}>💡 Crie uma senha para acessar sua mesa novamente caso saia do app</p>
+                        
+                        {/* SELEÇÃO DE GARÇOM */}
+                        <div style={{marginBottom:'1.5rem'}}>
+                            <h4 style={{color:'#4a9d4e',fontSize:'1.1rem',marginBottom:'1rem',textAlign:'center'}}>👨‍🍳 Escolha seu Garçom</h4>
+                            <div style={{display:'grid',gap:'0.8rem'}}>
+                                {waiters.filter(w => w.active).map(w => (
+                                    <button 
+                                        key={w.id}
+                                        onClick={() => setSelectedWaiter(w.id)}
+                                        style={{
+                                            padding:'1rem',
+                                            background: selectedWaiter === w.id ? '#4a9d4e' : '#0a0a0a',
+                                            border: selectedWaiter === w.id ? '2px solid #4a9d4e' : '2px solid #444',
+                                            borderRadius:'10px',
+                                            color:'#fff',
+                                            fontWeight:'800',
+                                            cursor:'pointer',
+                                            fontSize:'1rem',
+                                            display:'flex',
+                                            alignItems:'center',
+                                            justifyContent:'center',
+                                            gap:'0.5rem',
+                                            transition:'all 0.3s'
+                                        }}
+                                    >
+                                        {selectedWaiter === w.id ? '✓' : '👨‍🍳'} {w.name}
+                                    </button>
+                                ))}
+                                <button 
+                                    onClick={() => setSelectedWaiter(null)}
+                                    style={{
+                                        padding:'1rem',
+                                        background: selectedWaiter === null ? '#4a9d4e' : '#0a0a0a',
+                                        border: selectedWaiter === null ? '2px solid #4a9d4e' : '2px solid #444',
+                                        borderRadius:'10px',
+                                        color:'#fff',
+                                        fontWeight:'800',
+                                        cursor:'pointer',
+                                        fontSize:'1rem',
+                                        display:'flex',
+                                        alignItems:'center',
+                                        justifyContent:'center',
+                                        gap:'0.5rem',
+                                        transition:'all 0.3s'
+                                    }}
+                                >
+                                    {selectedWaiter === null ? '✓' : '🤷'} Sem Preferência
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div style={{display:'flex',gap:'1rem'}}>
+                            <button onClick={() => {setAsk(false); setSelectedWaiter(null);}} style={{flex:1,padding:'1.2rem',background:'#2a2a2a',border:'none',borderRadius:'10px',color:'#888',fontWeight:'800',cursor:'pointer'}}>VOLTAR</button>
+                            <button onClick={() => {
+                                if (!nome.trim()) return alert('Digite seu nome!');
+                                if (!pin || pin.length !== 4) return alert('Crie uma senha de 4 dígitos!');
+                                
+                                const updateData = {
+                                    status:'ocupada',
+                                    customerName:nome,
+                                    customerPin:pin,
+                                    openedAt:Date.now()
+                                };
+                                
+                                // Adicionar garçom se selecionado
+                                if (selectedWaiter) {
+                                    updateData.waiter = selectedWaiter;
+                                }
+                                
+                                db.ref(`tables/${mesa}`).update(updateData);
+                                sessionStorage.setItem('tableId', mesa);
+                                sessionStorage.setItem('customerPin', pin);
+                                setUser({tableId: parseInt(mesa)});
+                                setView('customer');
+                            }} style={{flex:2,padding:'1.2rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>ABRIR MESA</button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+
+function Master({config, products, waiters, tables, sales, setView}) {
+    const [tab, setTab] = useState('config');
+    const [modal, setModal] = useState(null);
+    const [edit, setEdit] = useState(null);
+    
+    return (
+        <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
+            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                    {config.logo && <img src={config.logo} alt={config.barName} style={{maxWidth:'150px',height:'100px'}} />}
+                    <h1 style={{color:'#d4a574',fontSize:'1.8rem',fontWeight:'900'}}>👑 MASTER</h1>
+                </div>
+                <button onClick={() => setView('login')} style={{padding:'0.8rem 1.5rem',background:'#d4a574',border:'none',borderRadius:'10px',color:'#000',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+            </header>
+            
+            <nav style={{background:'#0f0f0f',borderBottom:'2px solid #222',display:'flex'}}>
+                <button onClick={() => setTab('config')} style={{padding:'1.2rem 2rem',background:tab==='config'?'#1a1a1a':'transparent',border:'none',color:tab==='config'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>⚙️ CONFIG</button>
+                <button onClick={() => setTab('products')} style={{padding:'1.2rem 2rem',background:tab==='products'?'#1a1a1a':'transparent',border:'none',color:tab==='products'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>📦 PRODUTOS</button>
+                <button onClick={() => setTab('waiters')} style={{padding:'1.2rem 2rem',background:tab==='waiters'?'#1a1a1a':'transparent',border:'none',color:tab==='waiters'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>👨‍🍳 GARÇONS</button>
+                <button onClick={() => setTab('relatorios')} style={{padding:'1.2rem 2rem',background:tab==='relatorios'?'#1a1a1a':'transparent',border:'none',color:tab==='relatorios'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>📊 RELATÓRIOS</button>
+            </nav>
+            
+            <main style={{padding:'2rem',maxWidth:'1200px',margin:'0 auto'}}>
+                {tab === 'config' && <ConfigTab config={config} />}
+                {tab === 'products' && <ProductsTab products={products} config={config} onAdd={() => setModal('product')} onEdit={(p) => {setEdit(p); setModal('product');}} />}
+                {tab === 'waiters' && <WaitersTab waiters={waiters} onAdd={() => setModal('waiter')} onEdit={(w) => {setEdit(w); setModal('waiter');}} />}
+                {tab === 'relatorios' && (
+                    <div>
+                        <h2 style={{color:'#d4a574',fontSize:'2rem',marginBottom:'2rem',fontWeight:'900'}}>📊 Relatórios Gerenciais</h2>
+                        
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(250px,1fr))',gap:'1.5rem',marginBottom:'3rem'}}>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #d4a574',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>💰</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Faturamento Atual</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#d4a574'}}>
+                                    {config.currency} {tables.reduce((sum, t) => sum + (t.total || 0), 0).toFixed(2)}
+                                </div>
+                            </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #4a9d4e',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>📈</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Total Hoje</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#4a9d4e'}}>
+                                    {config.currency} {(sales || []).filter(s => {
+                                        const saleDate = new Date(s.date);
+                                        const today = new Date();
+                                        return saleDate.toDateString() === today.toDateString();
+                                    }).reduce((sum, s) => sum + s.total, 0).toFixed(2)}
+                                </div>
+                            </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #3498db',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>🏆</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Total Geral</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#3498db'}}>
+                                    {config.currency} {(sales || []).reduce((sum, s) => sum + s.total, 0).toFixed(2)}
+                                </div>
+                            </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #e67e22',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>🧾</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Vendas Totais</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#e67e22'}}>
+                                    {(sales || []).length}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',marginBottom:'2rem'}}>
+                            <h3 style={{color:'#d4a574',fontSize:'1.5rem',marginBottom:'1.5rem'}}>👨‍🍳 Performance dos Garçons</h3>
+                            {waiters.filter(w => w.active).map(waiter => {
+                                const waiterSales = (sales || []).filter(s => s.waiter === waiter.id);
+                                const total = waiterSales.reduce((s, sale) => s + sale.total, 0);
+                                const today = waiterSales.filter(s => {
+                                    const saleDate = new Date(s.date);
+                                    const todayDate = new Date();
+                                    return saleDate.toDateString() === todayDate.toDateString();
+                                });
+                                return (
+                                    <div key={waiter.id} style={{background:'#0a0a0a',padding:'1.5rem',borderRadius:'12px',marginBottom:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                        <div>
+                                            <div style={{fontWeight:'800',fontSize:'1.3rem',marginBottom:'0.3rem'}}>{waiter.name}</div>
+                                            <div style={{color:'#888'}}>
+                                                {waiterSales.length} vendas total • {today.length} hoje
+                                            </div>
+                                        </div>
+                                        <div style={{fontSize:'2rem',fontWeight:'900',color:'#d4a574'}}>
+                                            {config.currency} {total.toFixed(2)}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        
+                        <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',marginBottom:'2rem'}}>
+                            <h3 style={{color:'#d4a574',fontSize:'1.5rem',marginBottom:'1.5rem'}}>🏆 Top 10 Produtos</h3>
+                            {(() => {
+                                const productStats = {};
+                                (sales || []).forEach(sale => {
+                                    sale.orders.forEach(order => {
+                                        if (!productStats[order.id]) {
+                                            productStats[order.id] = {
+                                                name: order.name,
+                                                image: order.image,
+                                                quantity: 0,
+                                                revenue: 0
+                                            };
+                                        }
+                                        productStats[order.id].quantity += order.quantity;
+                                        productStats[order.id].revenue += order.price * order.quantity;
+                                    });
+                                });
+                                
+                                return Object.values(productStats)
+                                    .sort((a, b) => b.revenue - a.revenue)
+                                    .slice(0, 10)
+                                    .map((product, i) => (
+                                        <div key={i} style={{background:'#0a0a0a',padding:'1.5rem',borderRadius:'12px',marginBottom:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                            <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                                                <div style={{background:'#d4a574',color:'#000',width:'35px',height:'35px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'900'}}>{i+1}</div>
+                                                <div style={{fontSize:'2.5rem'}}>{product.image}</div>
+                                                <div>
+                                                    <div style={{fontWeight:'800',fontSize:'1.2rem'}}>{product.name}</div>
+                                                    <div style={{color:'#888'}}>{product.quantity} vendidos</div>
+                                                </div>
+                                            </div>
+                                            <div style={{fontSize:'1.8rem',fontWeight:'900',color:'#d4a574'}}>
+                                                {config.currency} {product.revenue.toFixed(2)}
+                                            </div>
+                                        </div>
+                                    ));
+                            })()}
+                        </div>
+                    </div>
+                )}
+            </main>
+            
+            {modal === 'product' && <ProductModal edit={edit} config={config} onClose={() => {setModal(null); setEdit(null);}} />}
+            {modal === 'waiter' && <WaiterModal edit={edit} onClose={() => {setModal(null); setEdit(null);}} />}
+        </div>
+    );
+}
+
+function ConfigTab({config}) {
+    const [d, setD] = useState(config);
+    const save = () => {db.ref('config').set(d); alert('✅ Salvo!');};
+    
+    const handleLogoUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        if (!file.type.startsWith('image/')) {
+            alert('❌ Por favor, selecione uma imagem!');
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+                // Criar canvas para redimensionar
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Dimensões fixas 300x200
+                canvas.width = 300;
+                canvas.height = 200;
+                
+                // Desenhar imagem redimensionada
+                ctx.drawImage(img, 0, 0, 300, 200);
+                
+                // Converter para base64
+                const base64 = canvas.toDataURL('image/png');
+                setD({...d, logo: base64});
+                alert('✅ Logo carregada! Clique em SALVAR para confirmar.');
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    };
+    
+    const removeLogo = () => {
+        if (confirm('Remover logo?')) {
+            setD({...d, logo: null});
+        }
+    };
+    
+    return (
+        <div style={{maxWidth:'600px'}}>
+            <h2 style={{color:'#d4a574',fontSize:'2rem',marginBottom:'2rem'}}>Configurações</h2>
+            <div style={{display:'grid',gap:'1.5rem'}}>
+                <div>
+                    <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>Nome do Bar</label>
+                    <input value={d.barName} onChange={e => setD({...d, barName: e.target.value})} style={{width:'100%',padding:'1rem',background:'#1a1a1a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}} />
+                </div>
+                
+                <div>
+                    <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>Logo do Bar (300x200px)</label>
+                    {d.logo ? (
+                        <div style={{background:'#1a1a1a',border:'2px solid #333',borderRadius:'10px',padding:'1.5rem',textAlign:'center'}}>
+                            <img src={d.logo} alt="Logo" style={{maxWidth:'300px',height:'200px',marginBottom:'1rem'}} />
+                            <div style={{display:'flex',gap:'1rem'}}>
+                                <label style={{flex:1,padding:'1rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',textAlign:'center'}}>
+                                    📤 TROCAR LOGO
+                                    <input type="file" accept="image/*" onChange={handleLogoUpload} style={{display:'none'}} />
+                                </label>
+                                <button onClick={removeLogo} style={{flex:1,padding:'1rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
+                                    🗑️ REMOVER
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <label style={{display:'block',padding:'3rem',background:'#1a1a1a',border:'2px dashed #333',borderRadius:'10px',textAlign:'center',cursor:'pointer',transition:'all 0.3s'}}
+                            onMouseEnter={e => e.currentTarget.style.borderColor = '#d4a574'}
+                            onMouseLeave={e => e.currentTarget.style.borderColor = '#333'}
+                        >
+                            <div style={{fontSize:'3rem',marginBottom:'1rem'}}>📷</div>
+                            <div style={{color:'#d4a574',fontWeight:'800',fontSize:'1.1rem',marginBottom:'0.5rem'}}>Clique para adicionar logo</div>
+                            <div style={{color:'#888',fontSize:'0.85rem'}}>Recomendado: 300x200 pixels</div>
+                            <input type="file" accept="image/*" onChange={handleLogoUpload} style={{display:'none'}} />
+                        </label>
+                    )}
+                </div>
+                
+                <div>
+                    <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>Número de Mesas (1-50)</label>
+                    <input type="number" min="1" max="50" value={d.tables} onChange={e => setD({...d, tables: parseInt(e.target.value) || 1})} style={{width:'100%',padding:'1rem',background:'#1a1a1a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}} />
+                    <p style={{color:'#888',fontSize:'0.85rem',marginTop:'0.5rem'}}>⚠️ Recarregue após salvar</p>
+                </div>
+                <div>
+                    <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>PIN Master</label>
+                    <PasswordInput value={d.masterPin} onChange={e => setD({...d, masterPin: e.target.value})} maxLength={4} style={{width:'100%',padding:'1rem',background:'#1a1a1a',border:'1px solid #333',borderRadius:'10px',color:'#fff',fontSize:'1.5rem',textAlign:'center'}} />
+                </div>
+                <button onClick={save} style={{padding:'1.2rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>💾 SALVAR</button>
+            </div>
+        </div>
+    );
+}
+
+function ProductsTab({products, config, onAdd, onEdit}) {
+    return (
+        <div>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:'2rem'}}>
+                <h2 style={{color:'#d4a574',fontSize:'2rem'}}>Produtos</h2>
+                <button onClick={onAdd} style={{padding:'1rem 2rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>+ NOVO</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'1.5rem'}}>
+                {products.map(p => (
+                    <div key={p.id} onClick={() => onEdit(p)} style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',cursor:'pointer',textAlign:'center'}}>
+                        <div style={{fontSize:'3rem',marginBottom:'0.8rem'}}>{p.image}</div>
+                        <div style={{fontWeight:'800',marginBottom:'0.5rem'}}>{p.name}</div>
+                        <div style={{color:'#d4a574',fontSize:'1.2rem',fontWeight:'900'}}>{config.currency} {p.price.toFixed(2)}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function WaitersTab({waiters, onAdd, onEdit}) {
+    return (
+        <div>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:'2rem'}}>
+                <h2 style={{color:'#d4a574',fontSize:'2rem'}}>Garçons</h2>
+                <button onClick={onAdd} style={{padding:'1rem 2rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>+ NOVO</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(250px,1fr))',gap:'1.5rem'}}>
+                {waiters.map(w => (
+                    <div key={w.id} onClick={() => onEdit(w)} style={{background:'#1a1a1a',padding:'2rem',borderRadius:'12px',border:'2px solid #333',cursor:'pointer',textAlign:'center'}}>
+                        <div style={{fontSize:'3rem',marginBottom:'1rem'}}>👨‍🍳</div>
+                        <div style={{fontWeight:'800',fontSize:'1.2rem',marginBottom:'0.5rem'}}>{w.name}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function ProductModal({edit, config, onClose}) {
+    const [d, setD] = useState(edit || {id: Date.now(), name: '', price: 0, image: '🍺', category: 'Bebidas', active: true});
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+    
+    const emojis = {
+        'Bebidas': ['🍺', '🍻', '🍷', '🍸', '🍹', '🍾', '🥂', '🧃', '🧋', '🥤', '☕', '🍵', '🧉', '🥛'],
+        'Comidas': ['🍗', '🍖', '🥓', '🍔', '🍟', '🍕', '🌭', '🥪', '🌮', '🌯', '🥙', '🧆', '🥗', '🍝', '🍜', '🍲', '🍱', '🍛', '🍙', '🍚', '🥟', '🦐', '🍤', '🦑', '🐙']
+    };
+    
+    const save = () => {db.ref(`products/${d.id}`).set(d); alert('✅ Salvo!'); onClose();};
+    const del = () => {if (confirm('Deletar?')) {db.ref(`products/${d.id}`).remove(); onClose();}};
+    
+    return (
+        <div onClick={onClose} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'1rem',overflowY:'auto'}}>
+            <div onClick={e => e.stopPropagation()} style={{background:'#1a1a1a',padding:'2.5rem',borderRadius:'20px',maxWidth:'600px',width:'100%',border:'2px solid #d4a574',maxHeight:'90vh',overflowY:'auto'}}>
+                <h3 style={{color:'#d4a574',fontSize:'1.8rem',marginBottom:'2rem'}}>{edit ? 'Editar' : 'Novo'} Produto</h3>
+                <div style={{display:'grid',gap:'1rem'}}>
+                    <input placeholder="Nome" value={d.name} onChange={e => setD({...d, name: e.target.value})} style={{width:'100%',padding:'1rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}} />
+                    <input type="number" placeholder="Preço" value={d.price || ''} onChange={e => setD({...d, price: parseFloat(e.target.value) || 0})} style={{width:'100%',padding:'1rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}} />
+                    <select value={d.category} onChange={e => setD({...d, category: e.target.value})} style={{padding:'1rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}}>
+                        <option>Bebidas</option>
+                        <option>Comidas</option>
+                    </select>
+                    
+                    <div>
+                        <label style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.5rem',display:'block'}}>Emoji do Produto:</label>
+                        <div style={{display:'flex',gap:'1rem',alignItems:'center'}}>
+                            <div style={{
+                                background:'#0a0a0a',
+                                border:'2px solid #d4a574',
+                                borderRadius:'10px',
+                                padding:'1rem',
+                                fontSize:'3rem',
+                                textAlign:'center',
+                                width:'80px',
+                                height:'80px',
+                                display:'flex',
+                                alignItems:'center',
+                                justifyContent:'center'
+                            }}>
+                                {d.image}
+                            </div>
+                            <button 
+                                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                                style={{
+                                    flex:1,
+                                    padding:'1rem',
+                                    background:'#d4a574',
+                                    border:'none',
+                                    borderRadius:'10px',
+                                    color:'#000',
+                                    fontWeight:'800',
+                                    cursor:'pointer'
+                                }}
+                            >
+                                {showEmojiPicker ? '▲ FECHAR' : '▼ ESCOLHER EMOJI'}
+                            </button>
+                        </div>
+                        
+                        {showEmojiPicker && (
+                            <div style={{
+                                marginTop:'1rem',
+                                padding:'1.5rem',
+                                background:'#0a0a0a',
+                                borderRadius:'10px',
+                                border:'1px solid #333'
+                            }}>
+                                <h4 style={{color:'#d4a574',marginBottom:'1rem'}}>
+                                    {d.category === 'Bebidas' ? '🍺 Bebidas' : '🍗 Comidas'}
+                                </h4>
+                                <div style={{
+                                    display:'grid',
+                                    gridTemplateColumns:'repeat(auto-fill,minmax(50px,1fr))',
+                                    gap:'0.5rem',
+                                    maxHeight:'200px',
+                                    overflowY:'auto'
+                                }}>
+                                    {emojis[d.category].map((emoji, i) => (
+                                        <button
+                                            key={i}
+                                            onClick={() => {
+                                                setD({...d, image: emoji});
+                                                setShowEmojiPicker(false);
+                                            }}
+                                            style={{
+                                                padding:'0.8rem',
+                                                background: d.image === emoji ? '#d4a574' : '#1a1a1a',
+                                                border:'2px solid #333',
+                                                borderRadius:'8px',
+                                                fontSize:'2rem',
+                                                cursor:'pointer',
+                                                transition:'all 0.2s'
+                                            }}
+                                            onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.1)'}
+                                            onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                                        >
+                                            {emoji}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                <div style={{display:'flex',gap:'1rem',marginTop:'2rem'}}>
+                    {edit && <button onClick={del} style={{padding:'1rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>DELETAR</button>}
+                    <button onClick={onClose} style={{flex:1,padding:'1rem',background:'#2a2a2a',border:'none',borderRadius:'10px',color:'#888',fontWeight:'800',cursor:'pointer'}}>CANCELAR</button>
+                    <button onClick={save} style={{flex:1,padding:'1rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SALVAR</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function WaiterModal({edit, onClose}) {
+    const [d, setD] = useState(edit || {id: Date.now(), name: '', pin: '', active: true, sales: 0});
+    const save = () => {db.ref(`waiters/${d.id}`).set(d); alert('✅ Salvo!'); onClose();};
+    const del = () => {if (confirm('Deletar?')) {db.ref(`waiters/${d.id}`).remove(); onClose();}};
+    
+    return (
+        <div onClick={onClose} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}}>
+            <div onClick={e => e.stopPropagation()} style={{background:'#1a1a1a',padding:'2.5rem',borderRadius:'20px',maxWidth:'450px',width:'100%',border:'2px solid #d4a574'}}>
+                <h3 style={{color:'#d4a574',fontSize:'1.8rem',marginBottom:'2rem'}}>{edit ? 'Editar' : 'Novo'} Garçom</h3>
+                <div style={{display:'grid',gap:'1rem'}}>
+                    <input placeholder="Nome" value={d.name} onChange={e => setD({...d, name: e.target.value})} style={{width:'100%',padding:'1rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}} />
+                    <PasswordInput placeholder="PIN" value={d.pin} onChange={e => setD({...d, pin: e.target.value})} maxLength={4} style={{width:'100%',padding:'1rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',color:'#fff',fontSize:'1.5rem',textAlign:'center'}} />
+                </div>
+                <div style={{display:'flex',gap:'1rem',marginTop:'2rem'}}>
+                    {edit && <button onClick={del} style={{padding:'1rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>DELETAR</button>}
+                    <button onClick={onClose} style={{flex:1,padding:'1rem',background:'#2a2a2a',border:'none',borderRadius:'10px',color:'#888',fontWeight:'800',cursor:'pointer'}}>CANCELAR</button>
+                    <button onClick={save} style={{flex:1,padding:'1rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SALVAR</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+function Admin({tables, waiters, products, config, sales, setView}) {
+    const [tab, setTab] = useState('mesas');
+    const [selW, setSelW] = useState(null);
+    const [qrModal, setQrModal] = useState(null);
+    
+    const openTable = (id, wId) => {db.ref(`tables/${id}`).update({status: 'ocupada', waiter: wId}); alert('Mesa aberta!');};
+    const closeTable = (id) => {
+        const table = tables.find(t => t.id === id);
+        if (!table) {
+            alert('❌ Mesa não encontrada!');
+            return;
+        }
+        
+        // Verificar se há pedidos pendentes
+        if (table.pending && table.pending.length > 0) {
+            alert('❌ Não é possível fechar a conta! Ainda há pedidos pendentes. Confirme ou cancele os pedidos primeiro.');
+            return;
+        }
+        
+        // CORREÇÃO: Garantir valores numéricos seguros
+        const subtotal = parseFloat(table.subtotal) || 0;
+        let tip = parseFloat(table.tip) || 0;
+        const total = parseFloat(table.total) || 0;
+        
+        // PERGUNTAR SOBRE GORJETA SE AINDA NÃO FOI ADICIONADA
+        if (!tip || tip === 0) {
+            const wantTip = confirm('💝 Deseja adicionar gorjeta antes de fechar a conta?');
+            
+            if (wantTip) {
+                const tipOptions = [
+                    `10% (${config.currency} ${(total * 0.10).toFixed(2)})`,
+                    `15% (${config.currency} ${(total * 0.15).toFixed(2)})`,
+                    `20% (${config.currency} ${(total * 0.20).toFixed(2)})`,
+                    'Valor Personalizado'
+                ];
+                
+                const choice = prompt(
+                    `Escolha a gorjeta:\n\n1 - ${tipOptions[0]}\n2 - ${tipOptions[1]}\n3 - ${tipOptions[2]}\n4 - ${tipOptions[3]}\n\nDigite o número da opção:`
+                );
+                
+                if (choice === '1') {
+                    tip = total * 0.10;
+                } else if (choice === '2') {
+                    tip = total * 0.15;
+                } else if (choice === '3') {
+                    tip = total * 0.20;
+                } else if (choice === '4') {
+                    const customTip = parseFloat(prompt('Digite o valor da gorjeta:'));
+                    if (customTip && customTip > 0) {
+                        tip = customTip;
+                    }
+                }
+                
+                // Salvar gorjeta se foi adicionada
+                if (tip > 0) {
+                    db.ref(`tables/${id}/tip`).set(tip);
+                }
+            }
+        }
+        
+        const totalWithTip = total + tip;
+        
+        // Confirmar fechamento
+        let confirmMsg = `Fechar conta da Mesa ${id}?\n\nSubtotal: ${config.currency} ${subtotal.toFixed(2)}`;
+        if (tip > 0) {
+            confirmMsg += `\nGorjeta: ${config.currency} ${tip.toFixed(2)}`;
+        }
+        confirmMsg += `\n\nTOTAL: ${config.currency} ${totalWithTip.toFixed(2)}`;
+        
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+        
+        if (totalWithTip > 0) {
+            // Salvar venda no histórico
+            const sale = {
+                id: Date.now(),
+                tableId: id,
+                waiter: table.waiter || null,
+                waiterName: table.waiter ? waiters.find(w => w.id === table.waiter)?.name || 'Sem garçom' : 'Cliente direto',
+                customerName: table.customerName || 'Cliente',
+                subtotal: subtotal,
+                tip: tip,
+                total: totalWithTip,
+                orders: table.orders || [],
+                date: new Date().toISOString(),
+                timestamp: Date.now()
+            };
+            
+            db.ref(`sales/${sale.id}`).set(sale).catch(error => {
+                console.error('Erro ao salvar venda:', error);
+                alert('⚠️ Aviso: Erro ao salvar no histórico, mas a mesa será fechada.');
+            });
+        }
+        
+        // Resetar mesa
+        db.ref(`tables/${id}`).set({
+            id: id,
+            status: 'livre',
+            waiter: null,
+            customerName: null,
+            customerPin: null,
+            total: 0,
+            subtotal: 0,
+            tip: 0,
+            orders: [],
+            pending: [],
+            callWaiter: false
+        }).then(() => {
+            alert('✅ Mesa fechada com sucesso!');
+        }).catch(error => {
+            console.error('Erro ao fechar mesa:', error);
+            alert('❌ Erro ao fechar mesa! Verifique a conexão e tente novamente.');
+        });
+    };
+    
+    const showQRCode = (tableId) => {
+        setQrModal(tableId);
+        
+        // Gerar QR Code após modal abrir
+        setTimeout(() => {
+            const canvas = document.getElementById(`qr-canvas-${tableId}`);
+            if (!canvas) {
+                console.error('Canvas não encontrado');
+                return;
+            }
+            
+            const url = `${window.location.href.split('?')[0]}?mesa=${tableId}`;
+            
+            if (window.QRCode) {
+                window.QRCode.toCanvas(canvas, url, {
+                    width: 300,
+                    margin: 2,
+                    color: {dark: '#000000', light: '#ffffff'}
+                }, (error) => {
+                    if (error) {
+                        console.error('Erro ao gerar QR Code:', error);
+                        alert('❌ Erro ao gerar QR Code!');
+                    } else {
+                        console.log('✅ QR Code gerado com sucesso!');
+                    }
+                });
+            } else {
+                console.error('Biblioteca QRCode não carregada');
+                alert('❌ Erro: Biblioteca QRCode não carregada!');
+            }
+        }, 200);
+    };
+    
+    const confirmOrder = (id, idx) => {
+        const t = tables.find(x => x.id === id);
+        const o = t.pending[idx];
+        const newO = [...t.orders, o];
+        const newP = t.pending.filter((_, i) => i !== idx);
+        const newS = t.subtotal + (o.price * o.quantity);
+        const newT = newS + (newS * config.serviceCharge / 100);
+        db.ref(`tables/${id}`).update({orders: newO, pending: newP, subtotal: newS, total: newT});
+        alert('Confirmado!');
+    };
+    
+    return (
+        <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
+            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                    {config.logo && <img src={config.logo} alt={config.barName} style={{maxWidth:'150px',height:'100px'}} />}
+                    <h1 style={{color:'#4a9d4e',fontSize:'1.8rem',fontWeight:'900'}}>👨‍💼 ADMIN</h1>
+                </div>
+                <button onClick={() => setView('login')} style={{padding:'0.8rem 1.5rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+            </header>
+            
+            <nav style={{background:'#0f0f0f',borderBottom:'2px solid #222',display:'flex'}}>
+                <button onClick={() => setTab('mesas')} style={{padding:'1.2rem 2rem',background:tab==='mesas'?'#1a1a1a':'transparent',border:'none',color:tab==='mesas'?'#4a9d4e':'#888',fontWeight:'800',cursor:'pointer'}}>📋 MESAS</button>
+                <button onClick={() => setTab('pedidos')} style={{padding:'1.2rem 2rem',background:tab==='pedidos'?'#1a1a1a':'transparent',border:'none',color:tab==='pedidos'?'#4a9d4e':'#888',fontWeight:'800',cursor:'pointer'}}>🔔 PEDIDOS</button>
+                <button onClick={() => setTab('chamadas')} style={{padding:'1.2rem 2rem',background:tab==='chamadas'?'#1a1a1a':'transparent',border:'none',color:tab==='chamadas'?'#4a9d4e':'#888',fontWeight:'800',cursor:'pointer',position:'relative'}}>
+                    📞 CHAMADAS
+                    {tables.filter(t => t.callWaiter).length > 0 && (
+                        <span style={{position:'absolute',top:'0.5rem',right:'0.5rem',background:'#e74c3c',color:'#fff',fontSize:'0.7rem',fontWeight:'900',padding:'0.2rem 0.5rem',borderRadius:'50%',minWidth:'1.2rem',height:'1.2rem',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                            {tables.filter(t => t.callWaiter).length}
+                        </span>
+                    )}
+                </button>
+                <button onClick={() => setTab('relatorios')} style={{padding:'1.2rem 2rem',background:tab==='relatorios'?'#1a1a1a':'transparent',border:'none',color:tab==='relatorios'?'#4a9d4e':'#888',fontWeight:'800',cursor:'pointer'}}>📊 RELATÓRIOS</button>
+            </nav>
+            
+            <main style={{padding:'2rem',maxWidth:'1400px',margin:'0 auto'}}>
+                {tab === 'mesas' && (
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'1.5rem'}}>
+                        {tables.map(t => (
+                            <div key={t.id} style={{
+                                background:'#1a1a1a',
+                                padding:'1.5rem',
+                                borderRadius:'12px',
+                                border:`3px solid ${t.callWaiter ? '#e74c3c' : t.status==='livre'?'#4a9d4e':'#d4a017'}`,
+                                position:'relative',
+                                animation: t.callWaiter ? 'blink 1.5s infinite' : 'none'
+                            }}>
+                                {t.callWaiter && (
+                                    <div style={{position:'absolute',top:'-10px',right:'-10px',background:'#e74c3c',color:'#fff',fontSize:'1.5rem',width:'40px',height:'40px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',animation:'pulse 1s infinite',boxShadow:'0 0 20px rgba(231,76,60,0.8)'}}>
+                                        🔔
+                                    </div>
+                                )}
+                                <div style={{fontSize:'1.5rem',fontWeight:'800',marginBottom:'0.5rem'}}>Mesa {t.id}</div>
+                                <div style={{fontSize:'0.85rem',padding:'0.3rem 0.8rem',borderRadius:'20px',display:'inline-block',background:t.status==='livre'?'#4a9d4e':'#d4a017',color:'#fff',fontWeight:'800',marginBottom:'0.5rem'}}>
+                                    {t.status.toUpperCase()}
+                                </div>
+                                {t.status === 'ocupada' ? (
+                                    <>
+                                        <div style={{color:'#ccc',fontSize:'0.9rem',marginTop:'0.5rem'}}>
+                                            {t.waiter ? waiters.find(w => w.id === t.waiter)?.name : t.customerName}
+                                        </div>
+                                        <div style={{fontSize:'1.3rem',fontWeight:'800',color:'#d4a574',marginTop:'0.5rem'}}>{config.currency} {t.total.toFixed(2)}</div>
+                                        {t.tip && t.tip > 0 && (
+                                            <div style={{fontSize:'0.85rem',color:'#f39c12',marginTop:'0.3rem',fontWeight:'800'}}>
+                                                💝 Gorjeta: {config.currency} {t.tip.toFixed(2)}
+                                            </div>
+                                        )}
+                                        {t.callWaiter && (
+                                            <button 
+                                                onClick={() => db.ref(`tables/${t.id}/callWaiter`).set(false)}
+                                                style={{width:'100%',padding:'0.6rem',background:'#e74c3c',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem',marginTop:'0.5rem'}}
+                                            >
+                                                ✓ ATENDER CHAMADA
+                                            </button>
+                                        )}
+                                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.5rem',marginTop:'1rem'}}>
+                                            <button onClick={() => showQRCode(t.id)} style={{padding:'0.6rem',background:'#3498db',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}>📱 QR</button>
+                                            <button onClick={() => closeTable(t.id)} style={{padding:'0.6rem',background:'#e67e22',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}>FECHAR</button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button onClick={() => setSelW(t.id)} style={{width:'100%',marginTop:'1rem',padding:'0.8rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>ABRIR</button>
+                                        <button onClick={() => showQRCode(t.id)} style={{width:'100%',marginTop:'0.5rem',padding:'0.6rem',background:'#3498db',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}>📱 VER QR CODE</button>
+                                    </>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+                
+                {tab === 'pedidos' && (
+                    <div>
+                        {tables.filter(t => t.pending && t.pending.length > 0).length === 0 ? (
+                            <div style={{textAlign:'center',padding:'4rem',color:'#888'}}>
+                                <div style={{fontSize:'4rem',marginBottom:'1rem'}}>✓</div>
+                                <p style={{fontSize:'1.2rem'}}>Nenhum pedido pendente no momento</p>
+                            </div>
+                        ) : (
+                            tables.filter(t => t.pending && t.pending.length > 0).map(t => (
+                                <div key={t.id} style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',marginBottom:'1.5rem'}}>
+                                    <h3 style={{color:'#d4a574',marginBottom:'1rem'}}>Mesa {t.id}</h3>
+                                    {t.pending.map((o, i) => (
+                                        <div key={i} style={{background:'#0a0a0a',padding:'1rem',borderRadius:'8px',marginBottom:'1rem'}}>
+                                            <div style={{display:'flex',gap:'1rem',marginBottom:'1rem'}}>
+                                                <span style={{fontSize:'2rem'}}>{o.image}</span>
+                                                <div style={{flex:1}}>
+                                                    <div style={{fontWeight:'800'}}>{o.name}</div>
+                                                    <div style={{color:'#888'}}>Qtd: {o.quantity} • {config.currency} {(o.price * o.quantity).toFixed(2)}</div>
+                                                </div>
+                                            </div>
+                                            <button onClick={() => confirmOrder(t.id, i)} style={{width:'100%',padding:'0.8rem',background:'#4a9d4e',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>✓ CONFIRMAR</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                )}
+                
+                {tab === 'chamadas' && (
+                    <div>
+                        <h2 style={{color:'#e74c3c',fontSize:'2rem',marginBottom:'2rem',fontWeight:'900'}}>📞 Chamadas de Garçom</h2>
+                        
+                        {tables.filter(t => t.callWaiter).length === 0 ? (
+                            <div style={{textAlign:'center',padding:'4rem',color:'#888'}}>
+                                <div style={{fontSize:'4rem',marginBottom:'1rem'}}>✓</div>
+                                <p style={{fontSize:'1.2rem'}}>Nenhuma chamada de garçom no momento</p>
+                            </div>
+                        ) : (
+                            <div style={{display:'grid',gap:'1.5rem'}}>
+                                {tables.filter(t => t.callWaiter).map(t => (
+                                    <div key={t.id} style={{
+                                        background:'#1a1a1a',
+                                        padding:'2rem',
+                                        borderRadius:'16px',
+                                        border:'3px solid #e74c3c',
+                                        animation:'blink 1.5s infinite',
+                                        display:'flex',
+                                        alignItems:'center',
+                                        gap:'2rem'
+                                    }}>
+                                        <div style={{fontSize:'4rem',animation:'pulse 1s infinite'}}>🔔</div>
+                                        <div style={{flex:1}}>
+                                            <h3 style={{fontSize:'2rem',fontWeight:'900',color:'#e74c3c',marginBottom:'0.5rem'}}>Mesa {t.id}</h3>
+                                            <div style={{color:'#ccc',fontSize:'1.1rem',marginBottom:'0.3rem'}}>
+                                                {t.waiter ? `Garçom: ${waiters.find(w => w.id === t.waiter)?.name}` : `Cliente: ${t.customerName}`}
+                                            </div>
+                                            <div style={{color:'#888',fontSize:'0.9rem'}}>
+                                                Conta atual: {config.currency} {t.total.toFixed(2)}
+                                            </div>
+                                        </div>
+                                        <button 
+                                            onClick={() => {
+                                                db.ref(`tables/${t.id}/callWaiter`).set(false);
+                                                playSound();
+                                                alert('✅ Chamada atendida!');
+                                            }}
+                                            style={{
+                                                padding:'1.5rem 2.5rem',
+                                                background:'#4a9d4e',
+                                                border:'none',
+                                                borderRadius:'12px',
+                                                color:'#fff',
+                                                fontWeight:'900',
+                                                cursor:'pointer',
+                                                fontSize:'1.2rem',
+                                                whiteSpace:'nowrap'
+                                            }}
+                                        >
+                                            ✓ ATENDER
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+                
+                {tab === 'relatorios' && (
+                    <div>
+                        <h2 style={{color:'#4a9d4e',fontSize:'2rem',marginBottom:'2rem',fontWeight:'900'}}>📊 Relatórios</h2>
+                        
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(250px,1fr))',gap:'1.5rem',marginBottom:'3rem'}}>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #4a9d4e',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>💰</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Faturamento Atual</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#4a9d4e'}}>
+                                    {config.currency} {tables.reduce((sum, t) => sum + (t.total || 0), 0).toFixed(2)}
+                                </div>
+                            </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #d4a574',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>📈</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Total Vendido Hoje</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#d4a574'}}>
+                                    {config.currency} {(sales || []).filter(s => {
+                                        const saleDate = new Date(s.date);
+                                        const today = new Date();
+                                        return saleDate.toDateString() === today.toDateString();
+                                    }).reduce((sum, s) => sum + s.total, 0).toFixed(2)}
+                                </div>
+                            </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #3498db',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>🍽️</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Mesas Ativas</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#3498db'}}>
+                                    {tables.filter(t => t.status === 'ocupada').length}
+                                </div>
+                            </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #e67e22',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>🧾</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Vendas Hoje</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#e67e22'}}>
+                                    {(sales || []).filter(s => {
+                                        const saleDate = new Date(s.date);
+                                        const today = new Date();
+                                        return saleDate.toDateString() === today.toDateString();
+                                    }).length}
+                                </div>
+                            </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #f39c12',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>💝</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Gorjetas Hoje</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#f39c12'}}>
+                                    {config.currency} {(sales || []).filter(s => {
+                                        const saleDate = new Date(s.date);
+                                        const today = new Date();
+                                        return saleDate.toDateString() === today.toDateString();
+                                    }).reduce((sum, s) => sum + (s.tip || 0), 0).toFixed(2)}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',marginBottom:'2rem'}}>
+                            <h3 style={{color:'#4a9d4e',fontSize:'1.5rem',marginBottom:'1.5rem'}}>👨‍🍳 Vendas e Gorjetas por Garçom (Hoje)</h3>
+                            {waiters.filter(w => w.active).map(waiter => {
+                                const todaySales = (sales || []).filter(s => {
+                                    const saleDate = new Date(s.date);
+                                    const today = new Date();
+                                    return s.waiter === waiter.id && saleDate.toDateString() === today.toDateString();
+                                });
+                                const totalSales = todaySales.reduce((s, sale) => s + sale.total, 0);
+                                const totalTips = todaySales.reduce((s, sale) => s + (sale.tip || 0), 0);
+                                const salesWithTips = todaySales.filter(s => s.tip && s.tip > 0).length;
+                                
+                                return (
+                                    <div key={waiter.id} style={{background:'#0a0a0a',padding:'1.5rem',borderRadius:'12px',marginBottom:'1rem'}}>
+                                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
+                                            <div>
+                                                <div style={{fontWeight:'800',fontSize:'1.2rem',marginBottom:'0.3rem'}}>{waiter.name}</div>
+                                                <div style={{color:'#888',fontSize:'0.9rem'}}>{todaySales.length} vendas hoje</div>
+                                            </div>
+                                            <div style={{textAlign:'right'}}>
+                                                <div style={{fontSize:'1.8rem',fontWeight:'900',color:'#4a9d4e'}}>
+                                                    {config.currency} {totalSales.toFixed(2)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {totalTips > 0 && (
+                                            <div style={{borderTop:'1px solid #333',paddingTop:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                                <div style={{color:'#f39c12',fontSize:'0.95rem'}}>
+                                                    💝 Gorjetas recebidas ({salesWithTips} {salesWithTips === 1 ? 'venda' : 'vendas'})
+                                                </div>
+                                                <div style={{fontSize:'1.5rem',fontWeight:'900',color:'#f39c12'}}>
+                                                    {config.currency} {totalTips.toFixed(2)}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        
+                        <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',marginBottom:'2rem'}}>
+                            <h3 style={{color:'#4a9d4e',fontSize:'1.5rem',marginBottom:'1.5rem'}}>🕐 Últimas 10 Vendas</h3>
+                            {(sales || []).slice(0, 10).map((sale, i) => (
+                                <div key={sale.id} style={{background:'#0a0a0a',padding:'1.5rem',borderRadius:'12px',marginBottom:'1rem'}}>
+                                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'0.5rem'}}>
+                                        <div>
+                                            <span style={{fontWeight:'800'}}>Mesa {sale.tableId}</span>
+                                            <span style={{color:'#888',marginLeft:'1rem'}}>
+                                                {new Date(sale.date).toLocaleString('pt-BR')}
+                                            </span>
+                                        </div>
+                                        <div style={{textAlign:'right'}}>
+                                            <div style={{fontSize:'1.5rem',fontWeight:'900',color:'#4a9d4e'}}>
+                                                {config.currency} {sale.total.toFixed(2)}
+                                            </div>
+                                            {sale.tip && sale.tip > 0 && (
+                                                <div style={{fontSize:'0.9rem',color:'#f39c12',marginTop:'0.2rem'}}>
+                                                    💝 + {config.currency} {sale.tip.toFixed(2)}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div style={{color:'#888',fontSize:'0.9rem'}}>
+                                        {sale.waiterName ? `Garçom: ${sale.waiterName}` : `Cliente: ${sale.customerName}`} • {sale.orders.length} itens
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </main>
+            
+            {selW && (
+                <div onClick={() => setSelW(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}}>
+                    <div onClick={e => e.stopPropagation()} style={{background:'#1a1a1a',padding:'2.5rem',borderRadius:'20px',maxWidth:'400px',width:'100%',border:'2px solid #4a9d4e'}}>
+                        <h2 style={{color:'#4a9d4e',marginBottom:'2rem',fontSize:'1.8rem'}}>Abrir Mesa {selW}</h2>
+                        {waiters.filter(w => w.active).map(w => (
+                            <button key={w.id} onClick={() => {openTable(selW, w.id); setSelW(null);}} style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #333',borderRadius:'12px',color:'#fff',fontWeight:'800',cursor:'pointer',marginBottom:'1rem'}}>👨‍🍳 {w.name}</button>
+                        ))}
+                        <button onClick={() => setSelW(null)} style={{width:'100%',padding:'1rem',background:'#2a2a2a',border:'none',borderRadius:'12px',color:'#888',fontWeight:'800',cursor:'pointer',marginTop:'1rem'}}>CANCELAR</button>
+                    </div>
+                </div>
+            )}
+            
+            {qrModal && (
+                <div onClick={() => setQrModal(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.95)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:10000,padding:'1rem'}}>
+                    <div onClick={e => e.stopPropagation()} style={{background:'#fff',padding:'3rem',borderRadius:'20px',maxWidth:'500px',width:'100%',textAlign:'center'}}>
+                        <h2 style={{color:'#000',marginBottom:'0.5rem',fontSize:'2rem',fontWeight:'900'}}>🍽️ Mesa {qrModal}</h2>
+                        <p style={{color:'#666',marginBottom:'2rem',fontSize:'0.95rem'}}>Escaneie o QR Code para acessar o cardápio</p>
+                        
+                        <div style={{background:'#f5f5f5',padding:'2rem',borderRadius:'12px',marginBottom:'1.5rem',display:'flex',justifyContent:'center',alignItems:'center',minHeight:'340px'}}>
+                            <canvas id={`qr-canvas-${qrModal}`}></canvas>
+                        </div>
+                        
+                        <div style={{background:'#f0f0f0',padding:'1rem',borderRadius:'8px',marginBottom:'1.5rem'}}>
+                            <p style={{color:'#666',fontSize:'0.75rem',marginBottom:'0.3rem'}}>Link direto:</p>
+                            <p style={{color:'#333',fontSize:'0.85rem',fontWeight:'600',wordBreak:'break-all',margin:0}}>
+                                {window.location.href.split('?')[0]}?mesa={qrModal}
+                            </p>
+                        </div>
+                        
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem'}}>
+                            <button 
+                                onClick={() => {
+                                    const canvas = document.getElementById(`qr-canvas-${qrModal}`);
+                                    if (canvas) {
+                                        const link = document.createElement('a');
+                                        link.download = `qrcode-mesa-${qrModal}.png`;
+                                        link.href = canvas.toDataURL();
+                                        link.click();
+                                    }
+                                }}
+                                style={{padding:'1.2rem',background:'#3498db',border:'none',borderRadius:'12px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1rem'}}
+                            >
+                                💾 BAIXAR
+                            </button>
+                            <button onClick={() => setQrModal(null)} style={{padding:'1.2rem',background:'#4a9d4e',border:'none',borderRadius:'12px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1rem'}}>✓ FECHAR</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function Balcao({tables, config, waiters, setView}) {
+    const [sel, setSel] = useState(null);
+    const [selW, setSelW] = useState(null);
+    const [qrModal, setQrModal] = useState(null);
+    
+    const openTable = (id, wId) => {
+        db.ref(`tables/${id}`).update({status: 'ocupada', waiter: wId});
+        alert('✅ Mesa aberta!');
+        setSelW(null);
+    };
+    
+    const closeTable = (tableId) => {
+        const t = tables.find(x => x.id === tableId);
+        if (!t) {
+            alert('❌ Mesa não encontrada!');
+            return;
+        }
+        
+        // Verificar se há pedidos pendentes
+        if (t.pending && t.pending.length > 0) {
+            alert('❌ Não é possível fechar a conta! Ainda há ' + t.pending.length + ' pedido(s) pendente(s). Confirme ou cancele os pedidos primeiro.');
+            return;
+        }
+        
+        // CORREÇÃO: Garantir valores numéricos seguros
+        const subtotal = parseFloat(t.subtotal) || 0;
+        let tip = parseFloat(t.tip) || 0;
+        const total = parseFloat(t.total) || 0;
+        
+        // PERGUNTAR SOBRE GORJETA SE AINDA NÃO FOI ADICIONADA
+        if (!tip || tip === 0) {
+            const wantTip = confirm('💝 Deseja adicionar gorjeta antes de fechar a conta?');
+            
+            if (wantTip) {
+                const tipOptions = [
+                    `10% (${config.currency} ${(total * 0.10).toFixed(2)})`,
+                    `15% (${config.currency} ${(total * 0.15).toFixed(2)})`,
+                    `20% (${config.currency} ${(total * 0.20).toFixed(2)})`,
+                    'Valor Personalizado'
+                ];
+                
+                const choice = prompt(
+                    `Escolha a gorjeta:\n\n1 - ${tipOptions[0]}\n2 - ${tipOptions[1]}\n3 - ${tipOptions[2]}\n4 - ${tipOptions[3]}\n\nDigite o número da opção:`
+                );
+                
+                if (choice === '1') {
+                    tip = total * 0.10;
+                } else if (choice === '2') {
+                    tip = total * 0.15;
+                } else if (choice === '3') {
+                    tip = total * 0.20;
+                } else if (choice === '4') {
+                    const customTip = parseFloat(prompt('Digite o valor da gorjeta:'));
+                    if (customTip && customTip > 0) {
+                        tip = customTip;
+                    }
+                }
+                
+                // Salvar gorjeta se foi adicionada
+                if (tip > 0) {
+                    db.ref(`tables/${tableId}/tip`).set(tip);
+                }
+            }
+        }
+        
+        const totalWithTip = total + tip;
+        
+        let confirmMsg = `Fechar conta da Mesa ${tableId}?\n\nSubtotal: ${config.currency} ${subtotal.toFixed(2)}`;
+        if (tip > 0) {
+            confirmMsg += `\nGorjeta: ${config.currency} ${tip.toFixed(2)}`;
+        }
+        confirmMsg += `\n\nTOTAL: ${config.currency} ${totalWithTip.toFixed(2)}`;
+        
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+        
+        // Salvar venda no histórico
+        if (totalWithTip > 0) {
+            const sale = {
+                id: Date.now(),
+                tableId: tableId,
+                waiter: t.waiter || null,
+                waiterName: t.waiter ? waiters.find(w => w.id === t.waiter)?.name || 'Sem garçom' : 'Cliente direto',
+                customerName: t.customerName || 'Cliente',
+                subtotal: subtotal,
+                tip: tip,
+                total: totalWithTip,
+                orders: t.orders || [],
+                date: new Date().toISOString(),
+                timestamp: Date.now()
+            };
+            
+            db.ref(`sales/${sale.id}`).set(sale).catch(error => {
+                console.error('Erro ao salvar venda:', error);
+                alert('⚠️ Erro ao salvar histórico de venda, mas a mesa será fechada.');
+            });
+        }
+        
+        // Resetar mesa
+        db.ref(`tables/${tableId}`).set({
+            id: tableId,
+            status: 'livre',
+            waiter: null,
+            customerName: null,
+            customerPin: null,
+            total: 0,
+            subtotal: 0,
+            tip: 0,
+            orders: [],
+            pending: [],
+            callWaiter: false
+        }).then(() => {
+            alert('✅ Mesa fechada com sucesso!');
+            setSel(null);
+        }).catch(error => {
+            console.error('Erro ao fechar mesa:', error);
+            alert('❌ Erro ao fechar mesa! Tente novamente.');
+        });
+    };
+    
+    const showQRCode = (tableId) => {
+        setQrModal(tableId);
+        
+        setTimeout(() => {
+            const canvas = document.getElementById(`qr-canvas-balcao-${tableId}`);
+            if (!canvas) {
+                console.error('Canvas não encontrado');
+                return;
+            }
+            
+            const url = `${window.location.href.split('?')[0]}?mesa=${tableId}`;
+            
+            if (window.QRCode) {
+                window.QRCode.toCanvas(canvas, url, {
+                    width: 300,
+                    margin: 2,
+                    color: {dark: '#000000', light: '#ffffff'}
+                }, (error) => {
+                    if (error) {
+                        console.error('Erro ao gerar QR Code:', error);
+                        alert('❌ Erro ao gerar QR Code!');
+                    }
+                });
+            } else {
+                console.error('Biblioteca QRCode não carregada');
+                alert('❌ Erro: Biblioteca QRCode não carregada!');
+            }
+        }, 200);
+    };
+    
+    const confirmOrder = (tableId, idx) => {
+        const t = tables.find(x => x.id === tableId);
+        if (!t || !t.pending || !t.pending[idx]) {
+            alert('❌ Erro: Pedido não encontrado!');
+            return;
+        }
+        
+        const o = t.pending[idx];
+        const newOrders = [...(t.orders || []), {...o, confirmedAt: Date.now()}];
+        const newPending = t.pending.filter((_, i) => i !== idx);
+        const newSubtotal = (t.subtotal || 0) + (o.price * o.quantity);
+        const newTotal = newSubtotal; // SEM TAXA DE SERVIÇO
+        
+        db.ref(`tables/${tableId}`).update({
+            orders: newOrders,
+            pending: newPending,
+            subtotal: newSubtotal,
+            total: newTotal
+        }).then(() => {
+            playSound();
+            alert('✅ Pedido confirmado!');
+            // Atualizar o modal com a mesa atualizada
+            const updatedTable = tables.find(x => x.id === tableId);
+            if (updatedTable && newPending.length === 0) {
+                // Se não tem mais pendentes, fecha o modal
+                setSel(null);
+            }
+        }).catch(err => {
+            console.error('Erro ao confirmar pedido:', err);
+            alert('❌ Erro ao confirmar pedido!');
+        });
+    };
+    
+    const cancelOrder = (tableId, idx) => {
+        if (!confirm('Tem certeza que deseja CANCELAR este pedido?')) return;
+        
+        const t = tables.find(x => x.id === tableId);
+        if (!t || !t.pending || !t.pending[idx]) {
+            alert('❌ Erro: Pedido não encontrado!');
+            return;
+        }
+        
+        const newPending = t.pending.filter((_, i) => i !== idx);
+        
+        db.ref(`tables/${tableId}/pending`).set(newPending).then(() => {
+            alert('❌ Pedido cancelado!');
+            if (newPending.length === 0) {
+                setSel(null);
+            }
+        }).catch(err => {
+            console.error('Erro ao cancelar pedido:', err);
+            alert('❌ Erro ao cancelar pedido!');
+        });
+    };
+    
+    const approveAll = (tableId) => {
+        const t = tables.find(x => x.id === tableId);
+        if (!t || !t.pending || t.pending.length === 0) {
+            alert('❌ Não há pedidos pendentes!');
+            return;
+        }
+        
+        if (!confirm(`Aprovar TODOS os ${t.pending.length} pedidos pendentes?`)) {
+            return;
+        }
+        
+        // Adicionar todos os pendentes aos confirmados
+        const newOrders = [...(t.orders || []), ...t.pending.map(p => ({...p, confirmedAt: Date.now()}))];
+        
+        // Calcular novo total SEM TAXA
+        const pendingTotal = t.pending.reduce((sum, p) => sum + (p.price * p.quantity), 0);
+        const newSubtotal = (t.subtotal || 0) + pendingTotal;
+        const newTotal = newSubtotal; // SEM TAXA DE SERVIÇO
+        
+        db.ref(`tables/${tableId}`).update({
+            orders: newOrders,
+            pending: [],
+            subtotal: newSubtotal,
+            total: newTotal
+        }).then(() => {
+            playSound();
+            alert(`✅ ${t.pending.length} pedidos aprovados!`);
+        }).catch(err => {
+            console.error('Erro ao aprovar todos:', err);
+            alert('❌ Erro ao aprovar pedidos!');
+        });
+    };
+    
+    const occupiedTables = tables.filter(t => t.status === 'ocupada');
+    const pendingCount = tables.reduce((sum, t) => sum + (t.pending ? t.pending.length : 0), 0);
+    const totalRevenue = tables.reduce((sum, t) => sum + t.total, 0);
+    
+    return (
+        <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
+            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',position:'sticky',top:0,zIndex:100}}>
+                <div style={{maxWidth:'1600px',margin:'0 auto',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                        <h1 style={{fontSize:'2rem',background:'linear-gradient(135deg,#e67e22,#d35400)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',fontWeight:'900',margin:0}}>🏪 BALCÃO</h1>
+                        <p style={{color:'#888',fontSize:'0.9rem',margin:0}}>Gestão de Pedidos</p>
+                    </div>
+                    <button onClick={() => setView('login')} style={{padding:'0.8rem 1.8rem',background:'#e67e22',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                </div>
+            </header>
+            
+            {/* STATS */}
+            <div style={{background:'#0f0f0f',padding:'1.5rem',borderBottom:'2px solid #222'}}>
+                <div style={{maxWidth:'1600px',margin:'0 auto',display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'1.5rem'}}>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🍽️</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Mesas Ocupadas</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:'#e67e22'}}>{occupiedTables.length}/{tables.length}</div>
+                    </div>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center',position:'relative'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🔔</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Pedidos Pendentes</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:pendingCount > 0 ? '#e74c3c' : '#4a9d4e'}}>{pendingCount}</div>
+                        {pendingCount > 0 && <NotificationBadge count={pendingCount} />}
+                    </div>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center',position:'relative'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>📞</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Chamadas de Garçom</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:tables.filter(t => t.callWaiter).length > 0 ? '#e74c3c' : '#4a9d4e'}}>
+                            {tables.filter(t => t.callWaiter).length}
+                        </div>
+                        {tables.filter(t => t.callWaiter).length > 0 && <NotificationBadge count={tables.filter(t => t.callWaiter).length} />}
+                    </div>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>💰</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Em Aberto</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:'#4a9d4e'}}>{config.currency} {totalRevenue.toFixed(2)}</div>
+                    </div>
+                </div>
+            </div>
+            
+            <main style={{padding:'2rem',maxWidth:'1600px',margin:'0 auto'}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'2rem'}}>
+                    {tables.map(t => {
+                        const hasPending = t.pending && t.pending.length > 0;
+                        const hasOrders = t.orders && t.orders.length > 0;
+                        const isOccupied = t.status === 'ocupada';
+                        const hasCall = t.callWaiter;
+                        
+                        return (
+                            <div 
+                                key={t.id}
+                                onClick={() => isOccupied && setSel(t)}
+                                style={{
+                                    background:'#1a1a1a',
+                                    padding:'2rem',
+                                    borderRadius:'16px',
+                                    border: hasCall ? '3px solid #e74c3c' : hasPending ? '3px solid #e74c3c' : hasOrders ? '3px solid #4a9d4e' : isOccupied ? '3px solid #d4a017' : '3px solid #4a9d4e',
+                                    cursor: isOccupied ? 'pointer' : 'default',
+                                    position:'relative',
+                                    animation: (hasPending || hasCall) ? 'blink 1.5s infinite' : 'none',
+                                    transition:'all 0.3s'
+                                }}
+                                onMouseEnter={e => isOccupied && (e.currentTarget.style.transform = 'scale(1.03)')}
+                                onMouseLeave={e => isOccupied && (e.currentTarget.style.transform = 'scale(1)')}
+                            >
+                                {hasPending && <NotificationBadge count={t.pending.length} />}
+                                {hasCall && !hasPending && (
+                                    <div style={{position:'absolute',top:'-10px',right:'-10px',background:'#e74c3c',color:'#fff',fontSize:'1.5rem',width:'40px',height:'40px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',animation:'pulse 1s infinite',boxShadow:'0 0 20px rgba(231,76,60,0.8)'}}>
+                                        🔔
+                                    </div>
+                                )}
+                                
+                                <div style={{fontSize:'3rem',textAlign:'center',marginBottom:'1rem'}}>{isOccupied ? '🍽️' : '✅'}</div>
+                                <div style={{fontSize:'2rem',fontWeight:'900',textAlign:'center',marginBottom:'1rem'}}>Mesa {t.id}</div>
+                                <div style={{textAlign:'center',padding:'0.5rem 1rem',borderRadius:'25px',background: isOccupied ? '#d4a017' : '#4a9d4e',color: isOccupied ? '#000' : '#fff',fontWeight:'800',fontSize:'0.9rem',marginBottom:'1rem'}}>
+                                    {isOccupied ? 'OCUPADA' : 'LIVRE'}
+                                </div>
+                                
+                                {isOccupied && (
+                                    <>
+                                        <div style={{color:'#888',fontSize:'0.95rem',textAlign:'center',marginBottom:'1rem'}}>
+                                            {t.waiter ? waiters.find(w => w.id === t.waiter)?.name : `Cliente: ${t.customerName}`}
+                                        </div>
+                                        <div style={{background:'#0a0a0a',padding:'1rem',borderRadius:'12px',textAlign:'center',marginBottom:'0.8rem'}}>
+                                            <div style={{color:'#888',fontSize:'0.8rem',marginBottom:'0.3rem'}}>Total</div>
+                                            <div style={{fontSize:'1.8rem',fontWeight:'900',color:'#e67e22'}}>{config.currency} {t.total.toFixed(2)}</div>
+                                            {t.tip && t.tip > 0 && (
+                                                <div style={{fontSize:'0.85rem',color:'#f39c12',marginTop:'0.5rem',fontWeight:'800'}}>
+                                                    💝 Gorjeta: {config.currency} {t.tip.toFixed(2)}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {hasCall && (
+                                            <div style={{background:'#e74c3c',padding:'0.8rem',borderRadius:'8px',marginBottom:'0.8rem',textAlign:'center'}}>
+                                                <div style={{color:'#fff',fontWeight:'800',fontSize:'0.9rem'}}>🔔 CHAMANDO GARÇOM</div>
+                                            </div>
+                                        )}
+                                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.8rem',fontSize:'0.85rem',marginBottom:'1rem'}}>
+                                            <div style={{background:'#0a0a0a',padding:'0.8rem',borderRadius:'8px',textAlign:'center'}}>
+                                                <div style={{color:'#4a9d4e',fontWeight:'800'}}>{t.orders ? t.orders.length : 0}</div>
+                                                <div style={{color:'#888',fontSize:'0.75rem'}}>Confirmados</div>
+                                            </div>
+                                            <div style={{background:'#0a0a0a',padding:'0.8rem',borderRadius:'8px',textAlign:'center'}}>
+                                                <div style={{color:hasPending ? '#e74c3c' : '#888',fontWeight:'800'}}>
+                                                    {t.pending ? t.pending.length : 0}
+                                                </div>
+                                                <div style={{color:'#888',fontSize:'0.75rem'}}>Pendentes</div>
+                                            </div>
+                                        </div>
+                                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.8rem'}}>
+                                            <button 
+                                                onClick={(e) => {e.stopPropagation(); showQRCode(t.id);}}
+                                                style={{padding:'0.8rem',background:'#3498db',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}
+                                            >
+                                                📱 QR
+                                            </button>
+                                            <button 
+                                                onClick={(e) => {e.stopPropagation(); closeTable(t.id);}}
+                                                style={{padding:'0.8rem',background:'#e74c3c',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}
+                                            >
+                                                💰 FECHAR
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                                
+                                {!isOccupied && (
+                                    <div style={{display:'grid',gap:'0.8rem',marginTop:'1rem'}}>
+                                        <button 
+                                            onClick={(e) => {e.stopPropagation(); setSelW(t.id);}}
+                                            style={{padding:'1rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.95rem'}}
+                                        >
+                                            🔓 ABRIR MESA
+                                        </button>
+                                        <button 
+                                            onClick={(e) => {e.stopPropagation(); showQRCode(t.id);}}
+                                            style={{padding:'0.8rem',background:'#3498db',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}
+                                        >
+                                            📱 VER QR CODE
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </main>
+            
+            {sel && (
+                <div onClick={() => setSel(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.95)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'2rem',overflowY:'auto'}}>
+                    <div onClick={e => e.stopPropagation()} style={{background:'#1a1a1a',padding:'3rem',borderRadius:'24px',maxWidth:'700px',width:'100%',border:'3px solid #e67e22',maxHeight:'90vh',overflowY:'auto'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2rem'}}>
+                            <h2 style={{fontSize:'2.5rem',color:'#e67e22',fontWeight:'900',margin:0}}>Mesa {sel.id}</h2>
+                            <button onClick={() => setSel(null)} style={{background:'#2a2a2a',border:'none',width:'40px',height:'40px',borderRadius:'50%',color:'#888',fontSize:'1.5rem',cursor:'pointer',fontWeight:'800'}}>×</button>
+                        </div>
+                        
+                        {/* INFO */}
+                        <div style={{background:'#0a0a0a',padding:'1.5rem',borderRadius:'12px',marginBottom:'2rem'}}>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem',marginBottom:'1rem'}}>
+                                <div>
+                                    <div style={{color:'#888',fontSize:'0.9rem'}}>Atendente</div>
+                                    <div style={{fontWeight:'800',fontSize:'1.1rem'}}>
+                                        {sel.waiter ? waiters.find(w => w.id === sel.waiter)?.name : sel.customerName}
+                                    </div>
+                                </div>
+                            </div>
+                            <div style={{borderTop:'1px solid #333',paddingTop:'1rem',marginTop:'1rem',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem',fontWeight:'900',color:'#e67e22'}}>{config.currency} {sel.total.toFixed(2)}</div>
+                            </div>
+                        </div>
+                        
+                        {/* PEDIDOS PENDENTES */}
+                        {sel.pending && sel.pending.length > 0 && (
+                            <div style={{marginBottom:'2rem'}}>
+                                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem',gap:'1rem'}}>
+                                    <h3 style={{color:'#e74c3c',fontSize:'1.5rem',margin:0}}>
+                                        🔔 Pendentes ({sel.pending.length})
+                                    </h3>
+                                    <div style={{display:'flex',gap:'0.8rem'}}>
+                                        <button 
+                                            onClick={() => {
+                                                if (!confirm(`Cancelar TODOS os ${sel.pending.length} pedidos pendentes?`)) return;
+                                                db.ref(`tables/${sel.id}/pending`).set([]).then(() => {
+                                                    alert('❌ Todos os pedidos foram cancelados!');
+                                                    setSel(null);
+                                                }).catch(err => {
+                                                    console.error('Erro ao cancelar pedidos:', err);
+                                                    alert('❌ Erro ao cancelar pedidos!');
+                                                });
+                                            }}
+                                            style={{
+                                                padding:'0.8rem 1.5rem',
+                                                background:'linear-gradient(135deg,#e74c3c,#c0392b)',
+                                                border:'none',
+                                                borderRadius:'10px',
+                                                color:'#fff',
+                                                fontWeight:'800',
+                                                cursor:'pointer',
+                                                fontSize:'0.9rem',
+                                                boxShadow:'0 2px 10px rgba(231,76,60,0.3)'
+                                            }}
+                                        >
+                                            ✗ CANCELAR TODOS
+                                        </button>
+                                        <button 
+                                            onClick={() => approveAll(sel.id)}
+                                            style={{
+                                                padding:'0.8rem 1.5rem',
+                                                background:'linear-gradient(135deg,#4a9d4e,#45a049)',
+                                                border:'none',
+                                                borderRadius:'10px',
+                                                color:'#fff',
+                                                fontWeight:'800',
+                                                cursor:'pointer',
+                                                fontSize:'0.9rem',
+                                                boxShadow:'0 2px 10px rgba(74,157,78,0.3)'
+                                            }}
+                                        >
+                                            ✓ APROVAR TODOS
+                                        </button>
+                                    </div>
+                                </div>
+                                {sel.pending.map((o, i) => (
+                                    <div key={i} style={{
+                                        background:'rgba(231,76,60,0.1)',
+                                        border:'2px solid #e74c3c',
+                                        padding:'1.5rem',
+                                        borderRadius:'12px',
+                                        marginBottom:'1rem'
+                                    }}>
+                                        <div style={{display:'flex',gap:'1.5rem',alignItems:'center',marginBottom:'1rem'}}>
+                                            <span style={{fontSize:'3rem'}}>{o.image}</span>
+                                            <div style={{flex:1}}>
+                                                <div style={{fontWeight:'800',fontSize:'1.2rem',marginBottom:'0.3rem'}}>{o.name}</div>
+                                                <div style={{color:'#888'}}>Qtd: {o.quantity} • {config.currency} {o.price.toFixed(2)} cada</div>
+                                            </div>
+                                            <div style={{fontSize:'1.5rem',fontWeight:'900',color:'#e67e22'}}>
+                                                {config.currency} {(o.price * o.quantity).toFixed(2)}
+                                            </div>
+                                        </div>
+                                        <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:'1rem'}}>
+                                            <button 
+                                                onClick={() => cancelOrder(sel.id, i)}
+                                                style={{
+                                                    width:'100%',
+                                                    padding:'1rem',
+                                                    background:'#e74c3c',
+                                                    border:'none',
+                                                    borderRadius:'10px',
+                                                    color:'#fff',
+                                                    fontWeight:'800',
+                                                    cursor:'pointer',
+                                                    fontSize:'1rem'
+                                                }}
+                                            >
+                                                ✗ CANCELAR
+                                            </button>
+                                            <button 
+                                                onClick={() => confirmOrder(sel.id, i)}
+                                                style={{
+                                                    width:'100%',
+                                                    padding:'1rem',
+                                                    background:'#4a9d4e',
+                                                    border:'none',
+                                                    borderRadius:'10px',
+                                                    color:'#fff',
+                                                    fontWeight:'800',
+                                                    cursor:'pointer',
+                                                    fontSize:'1rem'
+                                                }}
+                                            >
+                                                ✓ CONFIRMAR PEDIDO
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        
+                        {/* PEDIDOS CONFIRMADOS */}
+                        {sel.orders && sel.orders.length > 0 && (
+                            <div style={{marginBottom:'2rem'}}>
+                                <h3 style={{color:'#4a9d4e',fontSize:'1.5rem',marginBottom:'1rem'}}>✓ Confirmados ({sel.orders.length})</h3>
+                                <div style={{background:'#0a0a0a',padding:'1.5rem',borderRadius:'12px'}}>
+                                    {sel.orders.map((o, i) => (
+                                        <div key={i} style={{
+                                            display:'flex',
+                                            gap:'1.5rem',
+                                            alignItems:'center',
+                                            padding:'1rem',
+                                            borderBottom: i < sel.orders.length - 1 ? '1px solid #333' : 'none'
+                                        }}>
+                                            <span style={{fontSize:'2rem'}}>{o.image}</span>
+                                            <div style={{flex:1}}>
+                                                <div style={{fontWeight:'800',fontSize:'1.1rem'}}>{o.name}</div>
+                                                <div style={{color:'#888',fontSize:'0.85rem'}}>Qtd: {o.quantity}</div>
+                                            </div>
+                                            <div style={{fontWeight:'800',color:'#4a9d4e',fontSize:'1.2rem'}}>
+                                                {config.currency} {(o.price * o.quantity).toFixed(2)}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* BOTÃO FECHAR CONTA */}
+                        {sel.orders && sel.orders.length > 0 && (
+                            <button 
+                                onClick={() => closeTable(sel.id)}
+                                style={{
+                                    width:'100%',
+                                    padding:'1.5rem',
+                                    background:'linear-gradient(135deg,#e74c3c,#c0392b)',
+                                    border:'none',
+                                    borderRadius:'12px',
+                                    color:'#fff',
+                                    fontWeight:'900',
+                                    cursor:'pointer',
+                                    fontSize:'1.2rem',
+                                    boxShadow:'0 4px 15px rgba(231,76,60,0.4)',
+                                    marginTop:'1rem'
+                                }}
+                            >
+                                💰 FECHAR CONTA - {config.currency} {sel.total.toFixed(2)}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+            
+            {/* MODAL SELECIONAR GARÇOM */}
+            {selW && (
+                <div onClick={() => setSelW(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:10000}}>
+                    <div onClick={e => e.stopPropagation()} style={{background:'#1a1a1a',padding:'2.5rem',borderRadius:'20px',maxWidth:'450px',width:'100%',border:'3px solid #e67e22'}}>
+                        <h2 style={{color:'#e67e22',marginBottom:'0.5rem',fontSize:'1.8rem',fontWeight:'900'}}>Abrir Mesa {selW}</h2>
+                        <p style={{color:'#888',marginBottom:'1.5rem',fontSize:'0.95rem'}}>Selecione o garçom responsável:</p>
+                        {waiters.filter(w => w.active).map(w => (
+                            <button 
+                                key={w.id} 
+                                onClick={() => {openTable(selW, w.id); setSelW(null);}} 
+                                style={{
+                                    width:'100%',
+                                    padding:'1.2rem',
+                                    background:'#0a0a0a',
+                                    border:'2px solid #333',
+                                    borderRadius:'12px',
+                                    color:'#fff',
+                                    fontWeight:'800',
+                                    cursor:'pointer',
+                                    marginBottom:'1rem',
+                                    fontSize:'1.1rem',
+                                    transition:'all 0.3s'
+                                }}
+                                onMouseEnter={e => {
+                                    e.currentTarget.style.background = '#4a9d4e';
+                                    e.currentTarget.style.borderColor = '#4a9d4e';
+                                }}
+                                onMouseLeave={e => {
+                                    e.currentTarget.style.background = '#0a0a0a';
+                                    e.currentTarget.style.borderColor = '#333';
+                                }}
+                            >
+                                👨‍🍳 {w.name}
+                            </button>
+                        ))}
+                        <button 
+                            onClick={() => {openTable(selW, null); setSelW(null);}}
+                            style={{
+                                width:'100%',
+                                padding:'1.2rem',
+                                background:'#0a0a0a',
+                                border:'2px solid #333',
+                                borderRadius:'12px',
+                                color:'#fff',
+                                fontWeight:'800',
+                                cursor:'pointer',
+                                marginBottom:'1rem',
+                                fontSize:'1.1rem',
+                                transition:'all 0.3s'
+                            }}
+                            onMouseEnter={e => {
+                                e.currentTarget.style.background = '#6c757d';
+                                e.currentTarget.style.borderColor = '#6c757d';
+                            }}
+                            onMouseLeave={e => {
+                                e.currentTarget.style.background = '#0a0a0a';
+                                e.currentTarget.style.borderColor = '#333';
+                            }}
+                        >
+                            🤷 Sem Garçom
+                        </button>
+                        <button onClick={() => setSelW(null)} style={{width:'100%',padding:'1rem',background:'#2a2a2a',border:'none',borderRadius:'12px',color:'#888',fontWeight:'800',cursor:'pointer',marginTop:'0.5rem'}}>CANCELAR</button>
+                    </div>
+                </div>
+            )}
+            
+            {/* MODAL QR CODE */}
+            {qrModal && (
+                <div onClick={() => setQrModal(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.95)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:10001,padding:'1rem'}}>
+                    <div onClick={e => e.stopPropagation()} style={{background:'#fff',padding:'3rem',borderRadius:'20px',maxWidth:'500px',width:'100%',textAlign:'center'}}>
+                        <h2 style={{color:'#000',marginBottom:'0.5rem',fontSize:'2rem',fontWeight:'900'}}>🍽️ Mesa {qrModal}</h2>
+                        <p style={{color:'#666',marginBottom:'2rem',fontSize:'0.95rem'}}>Escaneie o QR Code para acessar o cardápio</p>
+                        
+                        <div style={{background:'#f5f5f5',padding:'2rem',borderRadius:'12px',marginBottom:'1.5rem',display:'flex',justifyContent:'center',alignItems:'center',minHeight:'340px'}}>
+                            <canvas id={`qr-canvas-balcao-${qrModal}`}></canvas>
+                        </div>
+                        
+                        <div style={{background:'#f0f0f0',padding:'1rem',borderRadius:'8px',marginBottom:'1.5rem'}}>
+                            <p style={{color:'#666',fontSize:'0.75rem',marginBottom:'0.3rem'}}>Link direto:</p>
+                            <p style={{color:'#333',fontSize:'0.85rem',fontWeight:'600',wordBreak:'break-all',margin:0}}>
+                                {window.location.href.split('?')[0]}?mesa={qrModal}
+                            </p>
+                        </div>
+                        
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem'}}>
+                            <button 
+                                onClick={() => {
+                                    const canvas = document.getElementById(`qr-canvas-balcao-${qrModal}`);
+                                    if (canvas) {
+                                        const link = document.createElement('a');
+                                        link.download = `qrcode-mesa-${qrModal}.png`;
+                                        link.href = canvas.toDataURL();
+                                        link.click();
+                                    }
+                                }}
+                                style={{padding:'1.2rem',background:'#3498db',border:'none',borderRadius:'12px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1rem'}}
+                            >
+                                💾 BAIXAR
+                            </button>
+                            <button onClick={() => setQrModal(null)} style={{padding:'1.2rem',background:'#e67e22',border:'none',borderRadius:'12px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1rem'}}>✓ FECHAR</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function NotificationBadge({count}) {
+    if (!count || count === 0) return null;
+    return (
+        <div style={{
+            position:'absolute',
+            top:'-8px',
+            right:'-8px',
+            background:'#e74c3c',
+            color:'#fff',
+            minWidth:'24px',
+            height:'24px',
+            borderRadius:'12px',
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'center',
+            fontSize:'0.75rem',
+            fontWeight:'900',
+            padding:'0 6px',
+            boxShadow:'0 2px 8px rgba(231,76,60,0.5)',
+            animation:'pulse 1.5s infinite'
+        }}>
+            {count}
+        </div>
+    );
+}
+
+function Waiter({tables, products, config, user, setView}) {
+    const [cart, setCart] = useState([]);
+    const [orderingFor, setOrderingFor] = useState(null);
+    const myTables = tables.filter(t => t.waiter === user.waiterId && t.status === 'ocupada');
+    const pendingCount = myTables.reduce((s, t) => s + (t.pending ? t.pending.length : 0), 0);
+    const totalSales = myTables.reduce((s, t) => s + t.total, 0);
+    const callingCount = myTables.reduce((s, t) => s + (t.calling ? 1 : 0), 0);
+    
+    const sendOrder = () => {
+        if (!orderingFor || cart.length === 0) return;
+        
+        const newItems = cart.map(i => ({
+            ...i, 
+            addedBy: user.name, 
+            addedAt: Date.now(),
+            orderId: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        }));
+        
+        // Usar once para pegar o valor atual e garantir que não duplica
+        const pendingRef = db.ref(`tables/${orderingFor.id}/pending`);
+        pendingRef.once('value').then(snapshot => {
+            const currentPending = snapshot.val() || [];
+            const updatedPending = [...currentPending, ...newItems];
+            pendingRef.set(updatedPending);
+        });
+        
+        setCart([]);
+        setOrderingFor(null);
+        alert(`✅ ${newItems.length} ${newItems.length === 1 ? 'pedido enviado' : 'pedidos enviados'}!`);
+        playSound();
+    };
+    
+    const grouped = products.filter(p => p.active).reduce((acc, p) => {
+        if (!acc[p.category]) acc[p.category] = [];
+        acc[p.category].push(p);
+        return acc;
+    }, {});
+    
+    return (
+        <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
+            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',position:'sticky',top:0,zIndex:100}}>
+                <div style={{maxWidth:'1400px',margin:'0 auto',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                        <h1 style={{fontSize:'2rem',color:'#3498db',fontWeight:'900',margin:0}}>👨‍🍳 {user.name}</h1>
+                        <p style={{color:'#888',fontSize:'0.9rem',margin:0}}>Garçom</p>
+                    </div>
+                    <button onClick={() => setView('login')} style={{padding:'0.8rem 1.8rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                </div>
+            </header>
+            <div style={{background:'#0f0f0f',padding:'1.5rem',borderBottom:'2px solid #222'}}>
+                <div style={{maxWidth:'1400px',margin:'0 auto',display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'1.5rem'}}>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🍽️</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Minhas Mesas</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:'#3498db'}}>{myTables.length}</div>
+                    </div>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center',position:'relative'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🔔</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Chamados</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:callingCount > 0 ? '#f39c12' : '#888'}}>{callingCount}</div>
+                        {callingCount > 0 && <NotificationBadge count={callingCount} />}
+                    </div>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center',position:'relative'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🔔</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Pedidos Pendentes</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:pendingCount > 0 ? '#e74c3c' : '#4a9d4e'}}>{pendingCount}</div>
+                        {pendingCount > 0 && <NotificationBadge count={pendingCount} />}
+                    </div>
+                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>💰</div>
+                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Vendas</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:'#4a9d4e'}}>{config.currency} {totalSales.toFixed(2)}</div>
+                    </div>
+                </div>
+            </div>
+            <main style={{padding:'2rem',maxWidth:'1400px',margin:'0 auto'}}>
+                {!orderingFor ? (
+                    <div>
+                        <h2 style={{color:'#3498db',fontSize:'1.8rem',marginBottom:'1.5rem'}}>Minhas Mesas</h2>
+                        {myTables.length === 0 ? (
+                            <div style={{textAlign:'center',padding:'4rem',color:'#888'}}>
+                                <div style={{fontSize:'4rem',marginBottom:'1rem'}}>🍽️</div>
+                                <h3 style={{fontSize:'1.5rem'}}>Nenhuma mesa atribuída</h3>
+                                <p>Peça ao admin para abrir mesas</p>
+                            </div>
+                        ) : (
+                            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'1.5rem'}}>
+                                {myTables.map(t => {
+                                    const hasPending = t.pending && t.pending.length > 0;
+                                    const hasOrders = t.orders && t.orders.length > 0;
+                                    const isCallingWaiter = t.callWaiter;
+                                    return (
+                                        <div key={t.id} style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:isCallingWaiter?'3px solid #f39c12':hasPending?'3px solid #e74c3c':hasOrders?'3px solid #4a9d4e':'3px solid #3498db',position:'relative',animation:hasPending||isCallingWaiter?'blink 1.5s infinite':'none'}}>
+                                            {hasPending && <NotificationBadge count={t.pending.length} />}
+                                            {isCallingWaiter && (
+                                                <div style={{
+                                                    position:'absolute',
+                                                    top:'-10px',
+                                                    left:'-10px',
+                                                    background:'#f39c12',
+                                                    color:'#fff',
+                                                    padding:'0.5rem 1rem',
+                                                    borderRadius:'20px',
+                                                    fontWeight:'900',
+                                                    fontSize:'0.9rem',
+                                                    boxShadow:'0 4px 12px rgba(243,156,18,0.5)',
+                                                    animation:'pulse 1s infinite'
+                                                }}>
+                                                    🔔 CHAMANDO
+                                                </div>
+                                            )}
+                                            <div style={{fontSize:'3rem',textAlign:'center',marginBottom:'1rem'}}>🍽️</div>
+                                            <div style={{fontSize:'2rem',fontWeight:'900',textAlign:'center',marginBottom:'1rem'}}>Mesa {t.id}</div>
+                                            {t.customerName && <div style={{color:'#888',textAlign:'center',marginBottom:'1rem'}}>{t.customerName}</div>}
+                                            <div style={{background:'#0a0a0a',padding:'1rem',borderRadius:'12px',textAlign:'center',marginBottom:'1rem'}}>
+                                                <div style={{color:'#888',fontSize:'0.8rem'}}>Total</div>
+                                                <div style={{fontSize:'1.8rem',fontWeight:'900',color:'#3498db'}}>{config.currency} {t.total.toFixed(2)}</div>
+                                            </div>
+                                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.8rem',fontSize:'0.85rem',marginBottom:'1rem'}}>
+                                                <div style={{background:'#0a0a0a',padding:'0.8rem',borderRadius:'8px',textAlign:'center'}}>
+                                                    <div style={{color:'#4a9d4e',fontWeight:'800'}}>{t.orders ? t.orders.length : 0}</div>
+                                                    <div style={{color:'#888',fontSize:'0.75rem'}}>Confirmados</div>
+                                                </div>
+                                                <div style={{background:'#0a0a0a',padding:'0.8rem',borderRadius:'8px',textAlign:'center'}}>
+                                                    <div style={{color:hasPending?'#e74c3c':'#888',fontWeight:'800'}}>{t.pending ? t.pending.length : 0}</div>
+                                                    <div style={{color:'#888',fontSize:'0.75rem'}}>Pendentes</div>
+                                                </div>
+                                            </div>
+                                            {isCallingWaiter ? (
+                                                <button 
+                                                    onClick={() => {
+                                                        db.ref(`tables/${t.id}/callWaiter`).set(false);
+                                                        alert('✅ Chamado atendido!');
+                                                    }} 
+                                                    style={{width:'100%',padding:'1rem',background:'#f39c12',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',marginBottom:'0.5rem'}}
+                                                >
+                                                    ✓ ATENDER CHAMADO
+                                                </button>
+                                            ) : null}
+                                            <button onClick={() => setOrderingFor(t)} style={{width:'100%',padding:'1rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>+ FAZER PEDIDO</button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div>
+                        <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',marginBottom:'2rem',display:'flex',justifyContent:'space-between'}}>
+                            <h2 style={{color:'#3498db',margin:0}}>Mesa {orderingFor.id} - Fazer Pedido</h2>
+                            <button onClick={() => {setOrderingFor(null); setCart([]);}} style={{padding:'0.8rem 1.5rem',background:'#2a2a2a',border:'none',borderRadius:'10px',color:'#888',fontWeight:'800',cursor:'pointer'}}>CANCELAR</button>
+                        </div>
+                        {Object.entries(grouped).map(([cat, items]) => (
+                            <div key={cat} style={{marginBottom:'2rem'}}>
+                                <h3 style={{fontSize:'1.3rem',marginBottom:'1rem',color:'#d4a574'}}>{cat}</h3>
+                                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:'1rem'}}>
+                                    {items.map(p => (
+                                        <div key={p.id} onClick={() => {
+                                            const ex = cart.find(i => i.id === p.id);
+                                            if (ex) setCart(cart.map(i => i.id === p.id ? {...i, quantity: i.quantity + 1} : i));
+                                            else setCart([...cart, {...p, quantity: 1}]);
+                                        }} style={{background:'#1a1a1a',border:'2px solid #333',borderRadius:'12px',padding:'1rem',textAlign:'center',cursor:'pointer'}}>
+                                            <div style={{fontSize:'3rem',marginBottom:'0.5rem'}}>{p.image}</div>
+                                            <div style={{fontWeight:'800',fontSize:'0.9rem',marginBottom:'0.3rem'}}>{p.name}</div>
+                                            <div style={{color:'#3498db',fontWeight:'900'}}>{config.currency} {p.price.toFixed(2)}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                        {cart.length > 0 && (
+                            <div style={{position:'fixed',bottom:'20px',right:'20px',background:'#1a1a1a',border:'3px solid #3498db',borderRadius:'16px',padding:'1.5rem',minWidth:'300px',maxHeight:'60vh',overflowY:'auto',boxShadow:'0 8px 32px rgba(0,0,0,0.5)',zIndex:1000}}>
+                                <h3 style={{color:'#3498db',marginBottom:'1rem'}}>🛒 Carrinho ({cart.length})</h3>
+                                {cart.map(i => (
+                                    <div key={i.id} style={{background:'#0a0a0a',borderRadius:'8px',padding:'0.8rem',marginBottom:'0.8rem',display:'flex',alignItems:'center',gap:'0.8rem'}}>
+                                        <span style={{fontSize:'1.5rem'}}>{i.image}</span>
+                                        <div style={{flex:1}}>
+                                            <div style={{fontWeight:'800',fontSize:'0.9rem'}}>{i.name}</div>
+                                            <div style={{color:'#3498db',fontSize:'0.85rem'}}>{config.currency} {(i.price * i.quantity).toFixed(2)}</div>
+                                        </div>
+                                        <div style={{display:'flex',gap:'0.3rem',alignItems:'center'}}>
+                                            <button onClick={() => setCart(cart.map(x => x.id === i.id ? {...x, quantity: x.quantity - 1} : x).filter(x => x.quantity > 0))} style={{background:'#e74c3c',border:'none',width:'24px',height:'24px',borderRadius:'50%',color:'#fff',cursor:'pointer',fontWeight:'900'}}>−</button>
+                                            <span style={{fontWeight:'900',minWidth:'20px',textAlign:'center'}}>{i.quantity}</span>
+                                            <button onClick={() => setCart(cart.map(x => x.id === i.id ? {...x, quantity: x.quantity + 1} : x))} style={{background:'#4a9d4e',border:'none',width:'24px',height:'24px',borderRadius:'50%',color:'#fff',cursor:'pointer',fontWeight:'900'}}>+</button>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div style={{borderTop:'2px solid #333',paddingTop:'1rem',marginTop:'1rem'}}>
+                                    <div style={{marginBottom:'1rem',textAlign:'right'}}>
+                                        <span style={{color:'#888'}}>Total: </span>
+                                        <span style={{color:'#3498db',fontSize:'1.3rem',fontWeight:'900'}}>{config.currency} {cart.reduce((s, i) => s + i.price * i.quantity, 0).toFixed(2)}</span>
+                                    </div>
+                                    <button onClick={sendOrder} style={{width:'100%',padding:'1rem',background:'linear-gradient(135deg,#4a9d4e,#45a049)',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'900',cursor:'pointer'}}>📤 ENVIAR PEDIDO</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </main>
+        </div>
+    );
+}
+
+function Customer({tables, products, config, waiters, setView}) {
+    const tableId = parseInt(sessionStorage.getItem('tableId'));
+    const [table, setTable] = useState(null);
+    const [cart, setCart] = useState([]);
+    const [show, setShow] = useState(false);
+    const [tab, setTab] = useState('menu');
+    
+    const callWaiter = () => {
+        if (!confirm('Deseja chamar o garçom?')) return;
+        
+        db.ref(`tables/${tableId}/callWaiter`).set(true).then(() => {
+            playSound();
+            alert('✅ Garçom chamado! Aguarde, ele já vem atendê-lo.');
+        });
+    };
+    
+    useEffect(() => {
+        if (!tableId) {setView('login'); return;}
+        db.ref(`tables/${tableId}`).on('value', s => {if (s.val()) setTable(s.val());});
+        return () => db.ref(`tables/${tableId}`).off();
+    }, [tableId]);
+    
+    const addOrder = () => {
+        if (cart.length === 0) {
+            alert('❌ Carrinho vazio!');
+            return;
+        }
+        
+        // Usar push para adicionar novos itens sem sobrescrever
+        const newItems = cart.map(i => ({
+            ...i, 
+            addedAt: Date.now(),
+            orderId: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        }));
+        
+        // Adicionar cada item individualmente
+        const pendingRef = db.ref(`tables/${tableId}/pending`);
+        pendingRef.once('value').then(snapshot => {
+            const currentPending = snapshot.val() || [];
+            const updatedPending = [...currentPending, ...newItems];
+            pendingRef.set(updatedPending);
+        });
+        
+        setCart([]);
+        setShow(false);
+        setTab('bill');
+        alert(`✅ ${newItems.length} ${newItems.length === 1 ? 'pedido enviado' : 'pedidos enviados'}!`);
+        playSound();
+    };
+    
+    if (!table) return <div style={{padding:'2rem',textAlign:'center'}}>Carregando...</div>;
+    
+    const grouped = products.filter(p => p.active).reduce((a, p) => {
+        if (!a[p.category]) a[p.category] = [];
+        a[p.category].push(p);
+        return a;
+    }, {});
+    
+    return (
+        <div style={{minHeight:'100vh',background:'#fff',color:'#000'}}>
+            <header style={{background:'#1a1a1a',padding:'1.5rem',textAlign:'center',color:'#fff'}}>
+                {config.logo && (
+                    <div style={{marginBottom:'1rem'}}>
+                        <img src={config.logo} alt={config.barName} style={{maxWidth:'300px',height:'200px'}} />
+                    </div>
+                )}
+                <div style={{background:'#d4a574',padding:'0.5rem 1.5rem',borderRadius:'25px',display:'inline-block',marginBottom:'1rem',color:'#000',fontWeight:'800'}}>MESA {table.id}</div>
+                {table.waiter && (
+                    <div style={{background:'#4a9d4e',padding:'0.5rem 1.5rem',borderRadius:'25px',display:'inline-block',marginBottom:'1rem',color:'#fff',fontWeight:'800',marginLeft:'0.5rem'}}>
+                        👨‍🍳 {waiters.find(w => w.id === table.waiter)?.name || 'Garçom'}
+                    </div>
+                )}
+                {!config.logo && <h1 style={{fontSize:'2rem',marginBottom:'0.5rem'}}>{config.barName}</h1>}
+            </header>
+            
+            <nav style={{display:'flex',background:'#f5f5f5',borderBottom:'2px solid #e0e0e0',position:'sticky',top:0,zIndex:100}}>
+                <button onClick={() => setTab('menu')} style={{flex:1,padding:'1.2rem',background:tab==='menu'?'#fff':'transparent',border:'none',fontWeight:'800',color:tab==='menu'?'#d4a574':'#666',cursor:'pointer'}}>📋 CARDÁPIO</button>
+                <button onClick={() => setTab('bill')} style={{flex:1,padding:'1.2rem',background:tab==='bill'?'#fff':'transparent',border:'none',fontWeight:'800',color:tab==='bill'?'#d4a574':'#666',cursor:'pointer'}}>🧾 CONTA</button>
+                <button onClick={() => setTab('call')} style={{flex:1,padding:'1.2rem',background:tab==='call'?'#fff':'transparent',border:'none',fontWeight:'800',color:tab==='call'?'#f39c12':'#666',cursor:'pointer'}}>🔔 CHAMAR</button>
+            </nav>
+            
+            <main style={{padding:'2rem',paddingBottom:'150px'}}>
+                {tab === 'menu' && (
+                    <div>
+                        {Object.entries(grouped).map(([cat, items]) => (
+                            <div key={cat} style={{marginBottom:'2.5rem'}}>
+                                <h2 style={{fontSize:'1.8rem',fontWeight:'900',marginBottom:'1.5rem'}}>{cat === 'Bebidas' ? '🍺' : '🍗'} {cat}</h2>
+                                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:'1.5rem'}}>
+                                    {items.map(p => (
+                                        <div key={p.id} onClick={() => {
+                                            const ex = cart.find(i => i.id === p.id);
+                                            if (ex) setCart(cart.map(i => i.id === p.id ? {...i, quantity: i.quantity + 1} : i));
+                                            else setCart([...cart, {...p, quantity: 1}]);
+                                        }} style={{background:'#fff',border:'2px solid #e0e0e0',borderRadius:'16px',padding:'1.5rem',textAlign:'center',cursor:'pointer'}}>
+                                            <span style={{fontSize:'3.5rem',display:'block',marginBottom:'0.8rem'}}>{p.image}</span>
+                                            <div style={{fontWeight:'800',marginBottom:'0.5rem',fontSize:'0.95rem'}}>{p.name}</div>
+                                            <div style={{color:'#d4a574',fontSize:'1.2rem',fontWeight:'900'}}>{config.currency} {p.price.toFixed(2)}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                
+                {tab === 'bill' && (
+                    <div style={{background:'#fff',borderRadius:'20px',padding:'2rem'}}>
+                        <div style={{textAlign:'center',paddingBottom:'1.5rem',borderBottom:'2px solid #e0e0e0',marginBottom:'1.5rem'}}>
+                            <h2 style={{fontSize:'1.8rem',marginBottom:'1rem'}}>Sua Conta</h2>
+                            <div style={{fontSize:'3rem',fontWeight:'900',color:'#d4a574'}}>{config.currency} {table.total.toFixed(2)}</div>
+                            {table.tip && table.tip > 0 && (
+                                <div style={{marginTop:'1rem',padding:'1rem',background:'#fff3cd',borderRadius:'10px'}}>
+                                    <div style={{color:'#856404',fontSize:'0.9rem'}}>💝 Gorjeta para o garçom</div>
+                                    <div style={{fontSize:'1.5rem',fontWeight:'900',color:'#f39c12'}}>+ {config.currency} {table.tip.toFixed(2)}</div>
+                                    <div style={{fontSize:'1.8rem',fontWeight:'900',color:'#d4a574',marginTop:'0.5rem',paddingTop:'0.5rem',borderTop:'2px solid #f39c12'}}>
+                                        Total com gorjeta: {config.currency} {(table.total + table.tip).toFixed(2)}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* BOTÕES DE GORJETA */}
+                        {!table.tip && table.orders && table.orders.length > 0 && (
+                            <div style={{marginBottom:'2rem',padding:'1.5rem',background:'#f8f9fa',borderRadius:'12px'}}>
+                                <h3 style={{textAlign:'center',marginBottom:'1rem',color:'#f39c12',fontSize:'1.3rem'}}>💝 Gostou do atendimento?</h3>
+                                <p style={{textAlign:'center',color:'#666',marginBottom:'1rem',fontSize:'0.9rem'}}>Deixe uma gorjeta para o garçom</p>
+                                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'1rem'}}>
+                                    {[10, 15, 20].map(percent => {
+                                        const tipValue = (table.total * percent) / 100;
+                                        return (
+                                            <button 
+                                                key={percent}
+                                                onClick={() => {
+                                                    if (confirm(`Adicionar gorjeta de ${percent}% (${config.currency} ${tipValue.toFixed(2)})?`)) {
+                                                        db.ref(`tables/${tableId}/tip`).set(tipValue);
+                                                        alert(`✅ Gorjeta de ${config.currency} ${tipValue.toFixed(2)} adicionada! Obrigado! 💝`);
+                                                    }
+                                                }}
+                                                style={{
+                                                    padding:'1.2rem',
+                                                    background:'linear-gradient(135deg,#f39c12,#e67e22)',
+                                                    border:'none',
+                                                    borderRadius:'12px',
+                                                    color:'#fff',
+                                                    fontWeight:'900',
+                                                    cursor:'pointer',
+                                                    fontSize:'1rem',
+                                                    boxShadow:'0 4px 12px rgba(243,156,18,0.3)'
+                                                }}
+                                            >
+                                                <div style={{fontSize:'1.5rem',marginBottom:'0.3rem'}}>{percent}%</div>
+                                                <div style={{fontSize:'0.85rem'}}>{config.currency} {tipValue.toFixed(2)}</div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <button 
+                                    onClick={() => {
+                                        const customTip = parseFloat(prompt('Digite o valor da gorjeta:'));
+                                        if (customTip && customTip > 0) {
+                                            db.ref(`tables/${tableId}/tip`).set(customTip);
+                                            alert(`✅ Gorjeta de ${config.currency} ${customTip.toFixed(2)} adicionada! Obrigado! 💝`);
+                                        }
+                                    }}
+                                    style={{
+                                        width:'100%',
+                                        marginTop:'1rem',
+                                        padding:'1rem',
+                                        background:'#6c757d',
+                                        border:'none',
+                                        borderRadius:'10px',
+                                        color:'#fff',
+                                        fontWeight:'800',
+                                        cursor:'pointer'
+                                    }}
+                                >
+                                    💰 Outro Valor
+                                </button>
+                            </div>
+                        )}
+                        
+                        {table.orders && table.orders.length > 0 && (
+                            <>
+                                <h3 style={{marginBottom:'1rem',color:'#4a9d4e'}}>✓ Confirmados</h3>
+                                {table.orders.map((o, i) => (
+                                    <div key={i} style={{background:'#f9f9f9',borderRadius:'12px',padding:'1rem',marginBottom:'1rem',display:'flex',alignItems:'center',gap:'1rem'}}>
+                                        <span style={{fontSize:'2rem'}}>{o.image}</span>
+                                        <div style={{flex:1}}>
+                                            <div style={{fontWeight:'800'}}>{o.name}</div>
+                                            <div style={{color:'#666'}}>Qtd: {o.quantity}</div>
+                                        </div>
+                                        <div style={{fontWeight:'800',color:'#d4a574'}}>{config.currency} {(o.price * o.quantity).toFixed(2)}</div>
+                                    </div>
+                                ))}
+                                
+                                {/* BOTÃO SOLICITAR FECHAMENTO */}
+                                <button
+                                    onClick={() => {
+                                        if (table.pending && table.pending.length > 0) {
+                                            alert('⚠️ Você ainda tem pedidos pendentes de confirmação. Aguarde a confirmação antes de solicitar o fechamento da conta.');
+                                            return;
+                                        }
+                                        
+                                        const wantToPay = confirm('💰 Deseja solicitar o fechamento da conta agora?');
+                                        if (!wantToPay) return;
+                                        
+                                        // Chamar garçom para fechar a conta
+                                        db.ref(`tables/${tableId}/callWaiter`).set(true);
+                                        playSound();
+                                        alert('✅ Solicitação enviada! O garçom virá fechar sua conta em breve.\n\n💝 Dica: Você pode adicionar gorjeta acima antes de chamar!');
+                                        setTab('call');
+                                    }}
+                                    style={{
+                                        width:'100%',
+                                        padding:'1.5rem',
+                                        marginTop:'2rem',
+                                        background:'linear-gradient(135deg,#4a9d4e,#45a049)',
+                                        border:'none',
+                                        borderRadius:'16px',
+                                        color:'#fff',
+                                        fontWeight:'900',
+                                        fontSize:'1.2rem',
+                                        cursor:'pointer',
+                                        boxShadow:'0 6px 20px rgba(74,157,78,0.4)',
+                                        transition:'all 0.3s'
+                                    }}
+                                    onMouseDown={e => e.currentTarget.style.transform = 'scale(0.97)'}
+                                    onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+                                >
+                                    💰 SOLICITAR FECHAMENTO DA CONTA
+                                </button>
+                            </>
+                        )}
+                    </div>
+                )}
+                
+                {tab === 'call' && (
+                    <div style={{textAlign:'center',paddingTop:'3rem'}}>
+                        <div style={{fontSize:'6rem',marginBottom:'2rem'}}>🔔</div>
+                        <h2 style={{fontSize:'2rem',fontWeight:'900',marginBottom:'1rem'}}>Precisa de Ajuda?</h2>
+                        <p style={{color:'#666',fontSize:'1.1rem',marginBottom:'3rem'}}>Chame o garçom que ele virá atendê-lo</p>
+                        
+                        {table.callWaiter ? (
+                            <div style={{background:'#fff3cd',border:'2px solid #f39c12',padding:'2rem',borderRadius:'16px',marginBottom:'2rem'}}>
+                                <div style={{fontSize:'3rem',marginBottom:'1rem'}}>⏳</div>
+                                <h3 style={{color:'#f39c12',fontSize:'1.5rem',fontWeight:'900',marginBottom:'0.5rem'}}>Garçom Chamado!</h3>
+                                <p style={{color:'#856404'}}>Aguarde, ele já vem atendê-lo.</p>
+                                <button 
+                                    onClick={() => db.ref(`tables/${tableId}/callWaiter`).set(false)}
+                                    style={{marginTop:'1.5rem',padding:'1rem 2rem',background:'#6c757d',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}
+                                >
+                                    CANCELAR CHAMADA
+                                </button>
+                            </div>
+                        ) : (
+                            <button 
+                                onClick={callWaiter}
+                                style={{
+                                    background:'linear-gradient(135deg,#f39c12,#e67e22)',
+                                    border:'none',
+                                    padding:'2rem 3rem',
+                                    borderRadius:'20px',
+                                    color:'#fff',
+                                    fontWeight:'900',
+                                    fontSize:'1.5rem',
+                                    cursor:'pointer',
+                                    boxShadow:'0 8px 20px rgba(243,156,18,0.4)',
+                                    transition:'all 0.3s'
+                                }}
+                                onMouseDown={e => e.currentTarget.style.transform = 'scale(0.95)'}
+                                onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+                            >
+                                🔔 CHAMAR GARÇOM
+                            </button>
+                        )}
+                    </div>
+                )}
+            </main>
+            
+            {cart.length > 0 && (
+                <div style={{position:'fixed',bottom:'20px',left:'20px',right:'20px',maxWidth:'500px',margin:'0 auto',zIndex:1000}}>
+                    <button onClick={() => setShow(true)} style={{width:'100%',background:'linear-gradient(135deg,#d4a574,#8B4513)',border:'none',padding:'1.5rem',borderRadius:'50px',color:'#fff',fontWeight:'900',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:'1.1rem'}}>
+                        <span>🛒 CARRINHO</span>
+                        <span style={{background:'#fff',color:'#d4a574',width:'35px',height:'35px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center'}}>{cart.length}</span>
+                    </button>
+                </div>
+            )}
+            
+            {show && (
+                <div onClick={() => setShow(false)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.8)',zIndex:2000,display:'flex',alignItems:'flex-end'}}>
+                    <div onClick={e => e.stopPropagation()} style={{background:'#fff',borderRadius:'28px 28px 0 0',width:'100%',maxHeight:'85vh',overflow:'auto'}}>
+                        <div style={{position:'sticky',top:0,background:'#fff',padding:'2rem',borderBottom:'2px solid #e0e0e0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <h3 style={{fontSize:'1.5rem',fontWeight:'900'}}>Carrinho</h3>
+                            <button onClick={() => setShow(false)} style={{background:'#f5f5f5',border:'none',width:'40px',height:'40px',borderRadius:'50%',cursor:'pointer',fontSize:'1.5rem'}}>×</button>
+                        </div>
+                        <div style={{padding:'2rem'}}>
+                            {cart.map(i => (
+                                <div key={i.id} style={{background:'#f9f9f9',borderRadius:'16px',padding:'1.2rem',marginBottom:'1rem',display:'flex',alignItems:'center',gap:'1rem'}}>
+                                    <span style={{fontSize:'2.5rem'}}>{i.image}</span>
+                                    <div style={{flex:1}}>
+                                        <div style={{fontWeight:'800'}}>{i.name}</div>
+                                        <div style={{color:'#d4a574',fontWeight:'800'}}>{config.currency} {(i.price * i.quantity).toFixed(2)}</div>
+                                    </div>
+                                    <div style={{display:'flex',alignItems:'center',gap:'1rem',background:'#fff',padding:'0.5rem 1rem',borderRadius:'25px'}}>
+                                        <button onClick={() => {
+                                            if (i.quantity > 1) setCart(cart.map(x => x.id === i.id ? {...x, quantity: x.quantity - 1} : x));
+                                            else setCart(cart.filter(x => x.id !== i.id));
+                                        }} style={{background:'#d4a574',border:'none',width:'32px',height:'32px',borderRadius:'50%',color:'#fff',fontSize:'1.2rem',cursor:'pointer'}}>−</button>
+                                        <span style={{fontWeight:'900',minWidth:'30px',textAlign:'center'}}>{i.quantity}</span>
+                                        <button onClick={() => setCart(cart.map(x => x.id === i.id ? {...x, quantity: x.quantity + 1} : x))} style={{background:'#d4a574',border:'none',width:'32px',height:'32px',borderRadius:'50%',color:'#fff',fontSize:'1.2rem',cursor:'pointer'}}>+</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div style={{position:'sticky',bottom:0,background:'#fff',padding:'2rem',borderTop:'2px solid #e0e0e0'}}>
+                            <button onClick={addOrder} style={{width:'100%',background:'linear-gradient(135deg,#4a9d4e,#45a049)',border:'none',padding:'1.2rem',borderRadius:'12px',color:'#fff',fontWeight:'900',fontSize:'1.1rem',cursor:'pointer'}}>ENVIAR PEDIDO</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+ReactDOM.render(<App />, document.getElementById('root'));
+</script>
+<style>
+@keyframes blink {
+    0%, 100% { border-color: #e74c3c; box-shadow: 0 0 20px rgba(231,76,60,0.5); }
+    50% { border-color: #c0392b; box-shadow: 0 0 40px rgba(231,76,60,0.8); }
+}
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+</style>
+</body>
+</html>
