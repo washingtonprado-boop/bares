@@ -73,7 +73,12 @@ const INITIAL_CONFIG = {
 const INITIAL_PRODUCTS = [
     {id: 1, name: 'Cerveja', price: 12, image: '🍺', category: 'Bebidas', active: true},
     {id: 2, name: 'Caipirinha', price: 15, image: '🍹', category: 'Bebidas', active: true},
-    {id: 3, name: 'Batata', price: 28, image: '🍟', category: 'Comidas', active: true},
+    {id: 3, name: 'Batata Frita', price: 28, image: '🍟', category: 'Comidas', active: true},
+    {id: 4, name: 'Espetinho', price: 8, image: ' 串', category: 'Comidas', active: true},
+    {id: 5, name: 'Caldo', price: 12, image: '🍲', category: 'Comidas', active: true},
+    {id: 6, name: 'Caldeirão', price: 45, image: '🥘', category: 'Comidas', active: true},
+    {id: 7, name: 'Açaí', price: 18, image: '🍇', category: 'Sobremesas', active: true},
+    {id: 8, name: 'Sorvete', price: 10, image: '🍦', category: 'Sobremesas', active: true},
 ];
 
 const INITIAL_WAITERS = [
@@ -81,11 +86,19 @@ const INITIAL_WAITERS = [
     {id: 2, name: 'Maria', pin: '2345', active: true, sales: 0},
 ];
 
-function PasswordInput({value, onChange, placeholder, style, maxLength}) {
+function PasswordInput({value, onChange, placeholder, style, maxLength, onKeyPress}) {
     const [show, setShow] = useState(false);
     return (
         <div style={{position:'relative'}}>
-            <input type={show ? 'text' : 'password'} value={value} onChange={onChange} placeholder={placeholder} maxLength={maxLength} style={style} />
+            <input 
+                type={show ? 'text' : 'password'} 
+                value={value} 
+                onChange={onChange} 
+                onKeyPress={onKeyPress}
+                placeholder={placeholder} 
+                maxLength={maxLength} 
+                style={style} 
+            />
             <button type="button" onClick={() => setShow(!show)} style={{position:'absolute',right:'1rem',top:'50%',transform:'translateY(-50%)',background:'transparent',border:'none',cursor:'pointer',fontSize:'1.3rem'}}>
                 {show ? '👁️' : '👁️‍🗨️'}
             </button>
@@ -254,7 +267,14 @@ function Login({config, tables, waiters, setUser, setView}) {
                 
                 {mode === 'staff' && !ask && (
                     <div>
-                        <PasswordInput value={pin} onChange={e => setPin(e.target.value)} placeholder="PIN" maxLength={4} style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.3rem',textAlign:'center',marginBottom:'1.5rem'}} />
+                        <PasswordInput 
+                            value={pin} 
+                            onChange={e => setPin(e.target.value)} 
+                            onKeyPress={e => {if (e.key === 'Enter') go();}}
+                            placeholder="PIN" 
+                            maxLength={4} 
+                            style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.3rem',textAlign:'center',marginBottom:'1.5rem'}} 
+                        />
                         <button onClick={go} style={{width:'100%',padding:'1.3rem',background:'#d4a574',border:'none',borderRadius:'10px',color:'#000',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>ENTRAR</button>
                         <div style={{marginTop:'1.5rem',padding:'1rem',background:'#0a0a0a',borderRadius:'10px',fontSize:'0.85rem'}}>
                             <p style={{color:'#d4a574',margin:'0.3rem 0',fontWeight:'700'}}>Master: 0000</p>
@@ -266,7 +286,24 @@ function Login({config, tables, waiters, setUser, setView}) {
                 
                 {mode === 'customer' && !ask && (
                     <div>
-                        <input type="number" value={mesa} onChange={e => setMesa(e.target.value)} placeholder="Número da Mesa" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.3rem',textAlign:'center',marginBottom:'1.5rem'}} />
+                        <input 
+                            type="number" 
+                            value={mesa} 
+                            onChange={e => setMesa(e.target.value)} 
+                            onKeyPress={e => {
+                                if (e.key === 'Enter') {
+                                    const t = tables.find(x => x.id === parseInt(mesa));
+                                    if (!t) {alert('❌ Mesa inválida'); return;}
+                                    if (t.status === 'livre') {
+                                        setAsk(true);
+                                    } else {
+                                        alert('❌ Esta mesa já está ocupada!');
+                                    }
+                                }
+                            }}
+                            placeholder="Número da Mesa" 
+                            style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.3rem',textAlign:'center',marginBottom:'1.5rem'}} 
+                        />
                         <button onClick={() => {
                             const t = tables.find(x => x.id === parseInt(mesa));
                             if (!t) {alert('❌ Mesa inválida'); return;}
@@ -297,8 +334,45 @@ function Login({config, tables, waiters, setUser, setView}) {
                             <div style={{fontSize:'3rem',marginBottom:'0.5rem'}}>🎉</div>
                             <h3 style={{color:'#4a9d4e',fontSize:'1.5rem'}}>Mesa {mesa} Livre!</h3>
                         </div>
-                        <input type="text" value={nome} onChange={e => setNome(e.target.value)} placeholder="Seu Nome" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1rem'}} />
-                        <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="Senha (4 dígitos)" maxLength="4" style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1.5rem'}} />
+                        <input 
+                            type="text" 
+                            value={nome} 
+                            onChange={e => setNome(e.target.value)} 
+                            onKeyPress={e => {
+                                if (e.key === 'Enter') {
+                                    document.querySelector('input[type="password"]').focus();
+                                }
+                            }}
+                            placeholder="Seu Nome" 
+                            style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1rem'}} 
+                        />
+                        <input 
+                            type="password" 
+                            value={pin} 
+                            onChange={e => setPin(e.target.value)} 
+                            onKeyPress={e => {
+                                if (e.key === 'Enter') {
+                                    if (!nome.trim()) return alert('Digite seu nome!');
+                                    if (!pin || pin.length !== 4) return alert('Crie uma senha de 4 dígitos!');
+                                    
+                                    const updateData = {
+                                        status:'ocupada',
+                                        customerName:nome,
+                                        customerPin:pin,
+                                        openedAt:Date.now()
+                                    };
+                                    
+                                    db.ref(`tables/${mesa}`).update(updateData);
+                                    sessionStorage.setItem('tableId', mesa);
+                                    sessionStorage.setItem('customerPin', pin);
+                                    setUser({tableId: parseInt(mesa)});
+                                    setView('customer');
+                                }
+                            }}
+                            placeholder="Senha (4 dígitos)" 
+                            maxLength="4" 
+                            style={{width:'100%',padding:'1.2rem',background:'#0a0a0a',border:'2px solid #444',borderRadius:'10px',color:'#fff',fontSize:'1.1rem',textAlign:'center',marginBottom:'1.5rem'}} 
+                        />
                         <p style={{color:'#888',fontSize:'0.85rem',textAlign:'center',marginBottom:'1.5rem'}}>💡 Crie uma senha para acessar sua mesa novamente caso saia do app</p>
                         
                         <div style={{display:'flex',gap:'1rem'}}>
