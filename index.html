@@ -477,14 +477,41 @@ function Login({config, tables, waiters, setUser, setView}) {
     }, [tables]);
     
     const go = () => {
-        if (pin === '0000') {setUser({name:'Master',role:'master'}); setView('master');}
-        else if (pin === '9999') {setUser({name:'Admin',role:'admin'}); setView('admin');}
-        else if (pin === '8888') {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
-        else {
-            const w = waiters.find(x => x.pin === pin && x.active);
-            if (w) {setUser({name:w.name,role:'waiter',waiterId:w.id}); setView('waiter');}
-            else alert('PIN incorreto!');
-        }
+        // Primeiro verifica sistema de usuários
+        db.ref('users').once('value').then(snapshot => {
+            const users = snapshot.val();
+            if (users) {
+                const user = Object.values(users).find(u => u.pin === pin && u.active);
+                if (user) {
+                    // Usuário encontrado no novo sistema
+                    if (user.role === 'waiter') {
+                        // Para garçons, precisa buscar o waiterId
+                        const waiter = waiters.find(w => w.pin === pin && w.active);
+                        if (waiter) {
+                            setUser({name:user.name, role:'waiter', waiterId:waiter.id});
+                            setView('waiter');
+                        } else {
+                            setUser({name:user.name, role:user.role});
+                            setView(user.role);
+                        }
+                    } else {
+                        setUser({name:user.name, role:user.role});
+                        setView(user.role);
+                    }
+                    return;
+                }
+            }
+            
+            // Fallback para sistema antigo (compatibilidade)
+            if (pin === '0000') {setUser({name:'Master',role:'master'}); setView('master');}
+            else if (pin === '9999') {setUser({name:'Admin',role:'admin'}); setView('admin');}
+            else if (pin === '8888') {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
+            else {
+                const w = waiters.find(x => x.pin === pin && x.active);
+                if (w) {setUser({name:w.name,role:'waiter',waiterId:w.id}); setView('waiter');}
+                else alert('❌ PIN incorreto!');
+            }
+        });
     };
     
     return (
@@ -654,15 +681,15 @@ function Login({config, tables, waiters, setUser, setView}) {
                             borderRadius:'12px',
                             border:'1px solid rgba(212,165,116,0.1)'
                         }}>
-                            <p style={{color:'var(--text-secondary)',fontSize:'0.8rem',marginBottom:'0.8rem',fontWeight:'600',textTransform:'uppercase',letterSpacing:'0.5px'}}>Acessos Rápidos</p>
+                            <p style={{color:'var(--text-secondary)',fontSize:'0.8rem',marginBottom:'0.8rem',fontWeight:'600',textTransform:'uppercase',letterSpacing:'0.5px'}}>Perfis de Acesso</p>
                             <div style={{display:'grid',gap:'0.5rem'}}>
                                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                                     <span style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>👑 Master</span>
-                                    <span className="badge badge-primary">0000</span>
+                                    <span className="badge badge-primary">Acesso Total</span>
                                 </div>
                                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                                     <span style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>⚙️ Admin</span>
-                                    <span className="badge badge-success">9999</span>
+                                    <span className="badge badge-success">Gerenciamento</span>
                                 </div>
                                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                                     <span style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>💰 Balcão</span>
@@ -673,7 +700,7 @@ function Login({config, tables, waiters, setUser, setView}) {
                                         fontWeight:'600',
                                         background:'#e67e22',
                                         color:'#fff'
-                                    }}>8888</span>
+                                    }}>Mesas & Pedidos</span>
                                 </div>
                             </div>
                         </div>
@@ -820,6 +847,42 @@ function Master({config, products, waiters, tables, sales, setView}) {
     const [modal, setModal] = useState(null);
     const [edit, setEdit] = useState(null);
     
+    // CORREÇÃO: Sincronizar número de mesas com config
+    useEffect(() => {
+        if (config.tables && tables.length > 0) {
+            const currentCount = tables.length;
+            const configCount = parseInt(config.tables);
+            
+            if (currentCount !== configCount) {
+                const obj = {};
+                
+                // Preservar mesas existentes
+                for (let i = 1; i <= configCount; i++) {
+                    const existingTable = tables.find(t => t.id === i);
+                    if (existingTable) {
+                        obj[i] = existingTable;
+                    } else {
+                        obj[i] = {
+                            id: i,
+                            status: 'livre',
+                            waiter: null,
+                            customerName: null,
+                            customerPin: null,
+                            total: 0,
+                            subtotal: 0,
+                            tip: 0,
+                            orders: [],
+                            pending: [],
+                            callWaiter: false
+                        };
+                    }
+                }
+                
+                db.ref('tables').set(obj);
+            }
+        }
+    }, [config.tables]);
+    
     return (
         <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
             <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -830,15 +893,17 @@ function Master({config, products, waiters, tables, sales, setView}) {
                 <button onClick={() => setView('login')} style={{padding:'0.8rem 1.5rem',background:'#d4a574',border:'none',borderRadius:'10px',color:'#000',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
             </header>
             
-            <nav style={{background:'#0f0f0f',borderBottom:'2px solid #222',display:'flex'}}>
-                <button onClick={() => setTab('config')} style={{padding:'1.2rem 2rem',background:tab==='config'?'#1a1a1a':'transparent',border:'none',color:tab==='config'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>⚙️ CONFIG</button>
-                <button onClick={() => setTab('products')} style={{padding:'1.2rem 2rem',background:tab==='products'?'#1a1a1a':'transparent',border:'none',color:tab==='products'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>📦 PRODUTOS</button>
-                <button onClick={() => setTab('waiters')} style={{padding:'1.2rem 2rem',background:tab==='waiters'?'#1a1a1a':'transparent',border:'none',color:tab==='waiters'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>👨‍🍳 GARÇONS</button>
-                <button onClick={() => setTab('relatorios')} style={{padding:'1.2rem 2rem',background:tab==='relatorios'?'#1a1a1a':'transparent',border:'none',color:tab==='relatorios'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer'}}>📊 RELATÓRIOS</button>
+            <nav style={{background:'#0f0f0f',borderBottom:'2px solid #222',display:'flex',overflowX:'auto'}}>
+                <button onClick={() => setTab('config')} style={{padding:'1.2rem 2rem',background:tab==='config'?'#1a1a1a':'transparent',border:'none',color:tab==='config'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>⚙️ CONFIG</button>
+                <button onClick={() => setTab('usuarios')} style={{padding:'1.2rem 2rem',background:tab==='usuarios'?'#1a1a1a':'transparent',border:'none',color:tab==='usuarios'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>👥 USUÁRIOS</button>
+                <button onClick={() => setTab('products')} style={{padding:'1.2rem 2rem',background:tab==='products'?'#1a1a1a':'transparent',border:'none',color:tab==='products'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📦 PRODUTOS</button>
+                <button onClick={() => setTab('waiters')} style={{padding:'1.2rem 2rem',background:tab==='waiters'?'#1a1a1a':'transparent',border:'none',color:tab==='waiters'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>👨‍🍳 GARÇONS</button>
+                <button onClick={() => setTab('relatorios')} style={{padding:'1.2rem 2rem',background:tab==='relatorios'?'#1a1a1a':'transparent',border:'none',color:tab==='relatorios'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📊 RELATÓRIOS</button>
             </nav>
             
             <main style={{padding:'2rem',maxWidth:'1200px',margin:'0 auto'}}>
                 {tab === 'config' && <ConfigTab config={config} />}
+                {tab === 'usuarios' && <UsersTab config={config} waiters={waiters} onAdd={() => setModal('user')} onEdit={(u) => {setEdit(u); setModal('user');}} />}
                 {tab === 'products' && <ProductsTab products={products} config={config} onAdd={() => setModal('product')} onEdit={(p) => {setEdit(p); setModal('product');}} />}
                 {tab === 'waiters' && <WaitersTab waiters={waiters} onAdd={() => setModal('waiter')} onEdit={(w) => {setEdit(w); setModal('waiter');}} />}
                 {tab === 'relatorios' && (
@@ -951,6 +1016,7 @@ function Master({config, products, waiters, tables, sales, setView}) {
             
             {modal === 'product' && <ProductModal edit={edit} config={config} onClose={() => {setModal(null); setEdit(null);}} />}
             {modal === 'waiter' && <WaiterModal edit={edit} onClose={() => {setModal(null); setEdit(null);}} />}
+            {modal === 'user' && <UserModal edit={edit} onClose={() => {setModal(null); setEdit(null);}} />}
         </div>
     );
 }
@@ -1099,6 +1165,263 @@ function ConfigTab({config}) {
     );
 }
 
+function UsersTab({config, waiters, onAdd, onEdit}) {
+    const [users, setUsers] = useState([]);
+    
+    useEffect(() => {
+        // Carregar usuários do Firebase
+        db.ref('users').on('value', snapshot => {
+            if (snapshot.val()) {
+                setUsers(Object.values(snapshot.val()));
+            } else {
+                // Inicializar usuários padrão
+                const defaultUsers = {
+                    master: {
+                        id: 'master',
+                        name: 'Master',
+                        pin: config.masterPin || '0000',
+                        role: 'master',
+                        active: true,
+                        canEdit: false // Master não pode ser editado/excluído
+                    },
+                    admin: {
+                        id: 'admin',
+                        name: 'Admin',
+                        pin: config.adminPin || '9999',
+                        role: 'admin',
+                        active: true,
+                        canEdit: true
+                    },
+                    balcao: {
+                        id: 'balcao',
+                        name: 'Balcão',
+                        pin: config.balcaoPin || '8888',
+                        role: 'balcao',
+                        active: true,
+                        canEdit: true
+                    }
+                };
+                db.ref('users').set(defaultUsers);
+            }
+        });
+        
+        return () => db.ref('users').off();
+    }, []);
+    
+    const deleteUser = (userId) => {
+        const user = users.find(u => u.id === userId);
+        if (!user) return;
+        
+        if (!user.canEdit) {
+            alert('❌ Este usuário não pode ser excluído!');
+            return;
+        }
+        
+        if (!confirm(`❌ Excluir usuário "${user.name}"?\n\nEsta ação não pode ser desfeita!`)) return;
+        
+        db.ref(`users/${userId}`).remove();
+        alert('✅ Usuário excluído!');
+    };
+    
+    const toggleActive = (userId) => {
+        const user = users.find(u => u.id === userId);
+        if (!user) return;
+        
+        db.ref(`users/${userId}/active`).set(!user.active);
+    };
+    
+    const roleNames = {
+        master: '👑 Master',
+        admin: '⚙️ Admin',
+        balcao: '💰 Balcão',
+        waiter: '👨‍🍳 Garçom',
+        custom: '🔧 Personalizado'
+    };
+    
+    const roleColors = {
+        master: '#d4a574',
+        admin: '#3498db',
+        balcao: '#e67e22',
+        waiter: '#4a9d4e',
+        custom: '#9b59b6'
+    };
+    
+    return (
+        <div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2rem'}}>
+                <h2 style={{color:'#d4a574',fontSize:'2rem',fontWeight:'900'}}>👥 Gerenciamento de Usuários</h2>
+                <button 
+                    onClick={onAdd}
+                    style={{
+                        padding:'1rem 2rem',
+                        background:'linear-gradient(135deg, #4a9d4e, #45a049)',
+                        border:'none',
+                        borderRadius:'12px',
+                        color:'#fff',
+                        fontWeight:'800',
+                        cursor:'pointer',
+                        fontSize:'1rem',
+                        boxShadow:'0 4px 15px rgba(74,157,78,0.3)'
+                    }}
+                >
+                    + NOVO USUÁRIO
+                </button>
+            </div>
+            
+            <div style={{display:'grid',gap:'1.5rem'}}>
+                {users.map(user => (
+                    <div 
+                        key={user.id}
+                        style={{
+                            background:'#1a1a1a',
+                            padding:'2rem',
+                            borderRadius:'16px',
+                            border:`2px solid ${roleColors[user.role] || '#333'}`,
+                            display:'flex',
+                            justifyContent:'space-between',
+                            alignItems:'center',
+                            opacity: user.active ? 1 : 0.5
+                        }}
+                    >
+                        <div style={{flex:1}}>
+                            <div style={{display:'flex',alignItems:'center',gap:'1rem',marginBottom:'0.5rem'}}>
+                                <h3 style={{fontSize:'1.5rem',fontWeight:'900',margin:0}}>{user.name}</h3>
+                                <span style={{
+                                    padding:'0.4rem 1rem',
+                                    background: roleColors[user.role] || '#666',
+                                    borderRadius:'20px',
+                                    fontSize:'0.85rem',
+                                    fontWeight:'700',
+                                    color: user.role === 'master' ? '#000' : '#fff'
+                                }}>
+                                    {roleNames[user.role] || user.role}
+                                </span>
+                                {!user.active && (
+                                    <span style={{
+                                        padding:'0.4rem 1rem',
+                                        background:'#e74c3c',
+                                        borderRadius:'20px',
+                                        fontSize:'0.85rem',
+                                        fontWeight:'700',
+                                        color:'#fff'
+                                    }}>
+                                        INATIVO
+                                    </span>
+                                )}
+                            </div>
+                            <div style={{color:'#888',fontSize:'0.95rem'}}>
+                                PIN: {user.pin ? '••••' : 'Não definido'}
+                            </div>
+                            <div style={{color:'#666',fontSize:'0.85rem',marginTop:'0.3rem'}}>
+                                ID: {user.id}
+                            </div>
+                        </div>
+                        
+                        <div style={{display:'flex',gap:'1rem'}}>
+                            {user.canEdit !== false && (
+                                <>
+                                    <button
+                                        onClick={() => toggleActive(user.id)}
+                                        style={{
+                                            padding:'0.8rem 1.5rem',
+                                            background: user.active ? '#6c757d' : '#4a9d4e',
+                                            border:'none',
+                                            borderRadius:'10px',
+                                            color:'#fff',
+                                            fontWeight:'800',
+                                            cursor:'pointer',
+                                            fontSize:'0.9rem'
+                                        }}
+                                    >
+                                        {user.active ? '❌ DESATIVAR' : '✅ ATIVAR'}
+                                    </button>
+                                    <button
+                                        onClick={() => onEdit(user)}
+                                        style={{
+                                            padding:'0.8rem 1.5rem',
+                                            background:'#3498db',
+                                            border:'none',
+                                            borderRadius:'10px',
+                                            color:'#fff',
+                                            fontWeight:'800',
+                                            cursor:'pointer',
+                                            fontSize:'0.9rem'
+                                        }}
+                                    >
+                                        ✏️ EDITAR
+                                    </button>
+                                    <button
+                                        onClick={() => deleteUser(user.id)}
+                                        style={{
+                                            padding:'0.8rem 1.5rem',
+                                            background:'#e74c3c',
+                                            border:'none',
+                                            borderRadius:'10px',
+                                            color:'#fff',
+                                            fontWeight:'800',
+                                            cursor:'pointer',
+                                            fontSize:'0.9rem'
+                                        }}
+                                    >
+                                        🗑️ EXCLUIR
+                                    </button>
+                                </>
+                            )}
+                            {user.canEdit === false && (
+                                <div style={{
+                                    padding:'0.8rem 1.5rem',
+                                    background:'rgba(212,165,116,0.1)',
+                                    border:'2px solid #d4a574',
+                                    borderRadius:'10px',
+                                    color:'#d4a574',
+                                    fontWeight:'800',
+                                    fontSize:'0.9rem'
+                                }}>
+                                    🔒 PROTEGIDO
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+            
+            {users.length === 0 && (
+                <div style={{
+                    textAlign:'center',
+                    padding:'4rem',
+                    background:'#1a1a1a',
+                    borderRadius:'16px',
+                    border:'2px dashed #333'
+                }}>
+                    <div style={{fontSize:'4rem',marginBottom:'1rem'}}>👥</div>
+                    <h3 style={{fontSize:'1.5rem',marginBottom:'0.5rem'}}>Nenhum usuário cadastrado</h3>
+                    <p style={{color:'#888'}}>Clique em "NOVO USUÁRIO" para começar</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// Componente para renderizar ícone/imagem do produto
+function ProductIcon({product, size = '3rem', style = {}}) {
+    if (product.imageType === 'upload' && product.image && product.image.startsWith('data:')) {
+        return (
+            <img 
+                src={product.image} 
+                alt={product.name}
+                style={{
+                    width: size === '3rem' ? '60px' : size === '2rem' ? '40px' : size,
+                    height: size === '3rem' ? '60px' : size === '2rem' ? '40px' : size,
+                    objectFit: 'cover',
+                    borderRadius: '8px',
+                    ...style
+                }}
+            />
+        );
+    }
+    return <div style={{fontSize: size, ...style}}>{product.image}</div>;
+}
+
 function ProductsTab({products, config, onAdd, onEdit}) {
     return (
         <div>
@@ -1109,7 +1432,9 @@ function ProductsTab({products, config, onAdd, onEdit}) {
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'1.5rem'}}>
                 {products.map(p => (
                     <div key={p.id} onClick={() => onEdit(p)} style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',cursor:'pointer',textAlign:'center'}}>
-                        <div style={{fontSize:'3rem',marginBottom:'0.8rem'}}>{p.image}</div>
+                        <div style={{marginBottom:'0.8rem',display:'flex',justifyContent:'center',alignItems:'center',minHeight:'60px'}}>
+                            <ProductIcon product={p} />
+                        </div>
                         <div style={{fontWeight:'800',marginBottom:'0.5rem'}}>{p.name}</div>
                         <div style={{color:'#d4a574',fontSize:'1.2rem',fontWeight:'900'}}>{config.currency} {p.price.toFixed(2)}</div>
                     </div>
@@ -1139,12 +1464,102 @@ function WaitersTab({waiters, onAdd, onEdit}) {
 }
 
 function ProductModal({edit, config, onClose}) {
-    const [d, setD] = useState(edit || {id: Date.now(), name: '', price: 0, image: '🍺', category: 'Bebidas', active: true});
+    const [d, setD] = useState(edit || {id: Date.now(), name: '', price: 0, image: '🍺', imageType: 'emoji', category: 'Bebidas', active: true});
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     
     const emojis = {
-        'Bebidas': ['🍺', '🍻', '🍷', '🍸', '🍹', '🍾', '🥂', '🧃', '🧋', '🥤', '☕', '🍵', '🧉', '🥛'],
-        'Comidas': ['🍗', '🍖', '🥓', '🍔', '🍟', '🍕', '🌭', '🥪', '🌮', '🌯', '🥙', '🧆', '🥗', '🍝', '🍜', '🍲', '🍱', '🍛', '🍙', '🍚', '🥟', '🦐', '🍤', '🦑', '🐙']
+        'Bebidas': [
+            // Cervejas e Chopp
+            '🍺', '🍻', 
+            // Vinhos e Champagne
+            '🍷', '🍾', '🥂',
+            // Drinks e Coquetéis
+            '🍸', '🍹', '🧉',
+            // Bebidas Quentes
+            '☕', '🍵', '🫖',
+            // Refrigerantes e Sucos
+            '🥤', '🧃', '🧋',
+            // Outras
+            '🥛', '🍶', '🥃'
+        ],
+        'Comidas': [
+            // Pizzas
+            '🍕',
+            // Carnes e Espetinhos
+            '🍗', '🍖', '🥩', '🥓', '🍱',
+            // Hambúrgueres e Sanduíches
+            '🍔', '🥪', '🌭',
+            // Batatas e Acompanhamentos
+            '🍟', '🥔',
+            // Pratos Quentes e Caldos
+            '🍲', '🥘', '🍜', '🍝', '🍛',
+            // Mexicano
+            '🌮', '🌯', '🥙', '🧆',
+            // Frutos do Mar
+            '🦐', '🍤', '🦑', '🐙', '🦞', '🦀', '🐟', '🐠', '🦈', '🍣', '🍱',
+            // Sushi e Japonês
+            '🍙', '🍚', '🥟', '🍢',
+            // Saladas
+            '🥗', '🥙',
+            // Sobremesas
+            '🍰', '🎂', '🧁', '🍮', '🍩', '🍪', '🍫', '🍬', '🍭',
+            // Sorvetes
+            '🍦', '🍧', '🍨',
+            // Frutas
+            '🍎', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝',
+            // Lanches
+            '🥨', '🥖', '🥐', '🧀', '🥚',
+            // Aperitivos
+            '🌰', '🥜', '🍿',
+            // Outros
+            '🥧', '🍕', '🫓', '🥙'
+        ]
+    };
+    
+    const handleImageUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        if (!file.type.startsWith('image/')) {
+            alert('❌ Por favor, selecione uma imagem!');
+            return;
+        }
+        
+        // Limitar tamanho (500KB)
+        if (file.size > 500000) {
+            alert('❌ Imagem muito grande! Máximo 500KB.\n\nDica: Use sites como TinyPNG.com para comprimir.');
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+                // Criar canvas para redimensionar
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Dimensões fixas 100x100 para ícones
+                canvas.width = 100;
+                canvas.height = 100;
+                
+                // Desenhar imagem redimensionada
+                ctx.drawImage(img, 0, 0, 100, 100);
+                
+                // Converter para base64
+                const base64 = canvas.toDataURL('image/png');
+                setD({...d, image: base64, imageType: 'upload'});
+                alert('✅ Imagem carregada! Clique em SALVAR para confirmar.');
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    };
+    
+    const removeImage = () => {
+        if (confirm('Remover imagem e voltar para emoji?')) {
+            setD({...d, image: '🍺', imageType: 'emoji'});
+        }
     };
     
     const save = () => {db.ref(`products/${d.id}`).set(d); alert('✅ Salvo!'); onClose();};
@@ -1163,38 +1578,103 @@ function ProductModal({edit, config, onClose}) {
                     </select>
                     
                     <div>
-                        <label style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.5rem',display:'block'}}>Emoji do Produto:</label>
-                        <div style={{display:'flex',gap:'1rem',alignItems:'center'}}>
-                            <div style={{
-                                background:'#0a0a0a',
-                                border:'2px solid #d4a574',
-                                borderRadius:'10px',
+                        <label style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.5rem',display:'block',fontWeight:'700'}}>Ícone/Imagem do Produto:</label>
+                        
+                        {/* Preview do ícone atual */}
+                        <div style={{
+                            background:'#0a0a0a',
+                            border:'2px solid #d4a574',
+                            borderRadius:'12px',
+                            padding:'1.5rem',
+                            marginBottom:'1rem',
+                            textAlign:'center'
+                        }}>
+                            <div style={{fontSize:'0.85rem',color:'#888',marginBottom:'0.5rem',fontWeight:'600'}}>
+                                {d.imageType === 'upload' ? 'IMAGEM PERSONALIZADA' : 'EMOJI'}
+                            </div>
+                            {d.imageType === 'upload' ? (
+                                <img src={d.image} alt="Produto" style={{width:'100px',height:'100px',objectFit:'cover',borderRadius:'8px'}} />
+                            ) : (
+                                <div style={{fontSize:'5rem'}}>{d.image}</div>
+                            )}
+                        </div>
+                        
+                        {/* Botões de escolha */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem',marginBottom:'1rem'}}>
+                            <label style={{
                                 padding:'1rem',
-                                fontSize:'3rem',
+                                background:'linear-gradient(135deg, #3498db, #2980b9)',
+                                border:'none',
+                                borderRadius:'10px',
+                                color:'#fff',
+                                fontWeight:'800',
+                                cursor:'pointer',
                                 textAlign:'center',
-                                width:'80px',
-                                height:'80px',
+                                transition:'all 0.3s',
                                 display:'flex',
                                 alignItems:'center',
-                                justifyContent:'center'
-                            }}>
-                                {d.image}
-                            </div>
+                                justifyContent:'center',
+                                gap:'0.5rem'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+                            >
+                                📤 ENVIAR IMAGEM
+                                <input type="file" accept="image/*" onChange={handleImageUpload} style={{display:'none'}} />
+                            </label>
                             <button 
                                 onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                                 style={{
-                                    flex:1,
                                     padding:'1rem',
-                                    background:'#d4a574',
+                                    background:'linear-gradient(135deg, #d4a574, #c89557)',
                                     border:'none',
                                     borderRadius:'10px',
                                     color:'#000',
                                     fontWeight:'800',
-                                    cursor:'pointer'
+                                    cursor:'pointer',
+                                    transition:'all 0.3s'
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                                onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+                            >
+                                {showEmojiPicker ? '▲ FECHAR EMOJIS' : '😀 USAR EMOJI'}
+                            </button>
+                        </div>
+                        
+                        {d.imageType === 'upload' && (
+                            <button 
+                                onClick={removeImage}
+                                style={{
+                                    width:'100%',
+                                    padding:'0.8rem',
+                                    background:'#e74c3c',
+                                    border:'none',
+                                    borderRadius:'10px',
+                                    color:'#fff',
+                                    fontWeight:'800',
+                                    cursor:'pointer',
+                                    marginBottom:'1rem',
+                                    fontSize:'0.9rem'
                                 }}
                             >
-                                {showEmojiPicker ? '▲ FECHAR' : '▼ ESCOLHER EMOJI'}
+                                🗑️ REMOVER IMAGEM
                             </button>
+                        )}
+                        
+                        <div style={{
+                            padding:'1rem',
+                            background:'rgba(52,152,219,0.1)',
+                            border:'1px solid rgba(52,152,219,0.3)',
+                            borderRadius:'10px',
+                            marginBottom:'1rem'
+                        }}>
+                            <div style={{fontSize:'0.85rem',color:'#3498db',fontWeight:'600',marginBottom:'0.3rem'}}>💡 Dicas:</div>
+                            <ul style={{margin:0,paddingLeft:'1.5rem',color:'#888',fontSize:'0.8rem',lineHeight:'1.6'}}>
+                                <li>Imagem máximo 500KB</li>
+                                <li>Será redimensionada para 100x100px</li>
+                                <li>Formatos: JPG, PNG, GIF, WebP</li>
+                                <li>Prefira imagens quadradas</li>
+                            </ul>
                         </div>
                         
                         {showEmojiPicker && (
@@ -1219,12 +1699,12 @@ function ProductModal({edit, config, onClose}) {
                                         <button
                                             key={i}
                                             onClick={() => {
-                                                setD({...d, image: emoji});
+                                                setD({...d, image: emoji, imageType: 'emoji'});
                                                 setShowEmojiPicker(false);
                                             }}
                                             style={{
                                                 padding:'0.8rem',
-                                                background: d.image === emoji ? '#d4a574' : '#1a1a1a',
+                                                background: d.image === emoji && d.imageType === 'emoji' ? '#d4a574' : '#1a1a1a',
                                                 border:'2px solid #333',
                                                 borderRadius:'8px',
                                                 fontSize:'2rem',
@@ -1269,6 +1749,226 @@ function WaiterModal({edit, onClose}) {
                     {edit && <button onClick={del} style={{padding:'1rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>DELETAR</button>}
                     <button onClick={onClose} style={{flex:1,padding:'1rem',background:'#2a2a2a',border:'none',borderRadius:'10px',color:'#888',fontWeight:'800',cursor:'pointer'}}>CANCELAR</button>
                     <button onClick={save} style={{flex:1,padding:'1rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SALVAR</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function UserModal({edit, onClose}) {
+    const [d, setD] = useState(edit || {
+        id: Date.now().toString(),
+        name: '',
+        pin: '',
+        role: 'custom',
+        active: true,
+        canEdit: true
+    });
+    
+    const save = () => {
+        if (!d.name.trim()) {
+            alert('❌ Nome é obrigatório!');
+            return;
+        }
+        
+        if (!d.pin || d.pin.length !== 4) {
+            alert('❌ PIN deve ter 4 dígitos!');
+            return;
+        }
+        
+        // Verificar se PIN já existe (exceto se estiver editando o mesmo usuário)
+        db.ref('users').once('value').then(snapshot => {
+            const users = snapshot.val() || {};
+            const pinExists = Object.values(users).some(u => 
+                u.pin === d.pin && u.id !== d.id
+            );
+            
+            if (pinExists) {
+                alert('❌ Este PIN já está em uso! Escolha outro.');
+                return;
+            }
+            
+            // Salvar usuário
+            db.ref(`users/${d.id}`).set(d);
+            alert('✅ Usuário salvo!');
+            onClose();
+        });
+    };
+    
+    const del = () => {
+        if (!d.canEdit) {
+            alert('❌ Este usuário não pode ser excluído!');
+            return;
+        }
+        
+        if (confirm(`❌ Excluir usuário "${d.name}"?\n\nEsta ação não pode ser desfeita!`)) {
+            db.ref(`users/${d.id}`).remove();
+            alert('✅ Usuário excluído!');
+            onClose();
+        }
+    };
+    
+    const roleOptions = [
+        {value: 'admin', label: '⚙️ Admin', desc: 'Acesso total ao sistema'},
+        {value: 'balcao', label: '💰 Balcão', desc: 'Gerenciar mesas e pedidos'},
+        {value: 'waiter', label: '👨‍🍳 Garçom', desc: 'Ver apenas suas mesas'},
+        {value: 'custom', label: '🔧 Personalizado', desc: 'Permissões customizadas'}
+    ];
+    
+    return (
+        <div onClick={onClose} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'1rem'}}>
+            <div onClick={e => e.stopPropagation()} style={{background:'#1a1a1a',padding:'2.5rem',borderRadius:'20px',maxWidth:'500px',width:'100%',border:'2px solid #d4a574',maxHeight:'90vh',overflowY:'auto'}}>
+                <h3 style={{color:'#d4a574',fontSize:'1.8rem',marginBottom:'2rem',fontWeight:'900'}}>
+                    {edit ? '✏️ Editar Usuário' : '➕ Novo Usuário'}
+                </h3>
+                
+                <div style={{display:'grid',gap:'1.5rem'}}>
+                    {/* Nome */}
+                    <div>
+                        <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>Nome do Usuário</label>
+                        <input 
+                            placeholder="Ex: João Silva" 
+                            value={d.name} 
+                            onChange={e => setD({...d, name: e.target.value})} 
+                            style={{
+                                width:'100%',
+                                padding:'1rem',
+                                background:'#0a0a0a',
+                                border:'1px solid #333',
+                                borderRadius:'10px',
+                                color:'#fff',
+                                fontSize:'1rem'
+                            }} 
+                        />
+                    </div>
+                    
+                    {/* PIN */}
+                    <div>
+                        <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>PIN (4 dígitos)</label>
+                        <PasswordInput 
+                            placeholder="••••" 
+                            value={d.pin} 
+                            onChange={e => setD({...d, pin: e.target.value})} 
+                            maxLength={4} 
+                            style={{
+                                width:'100%',
+                                padding:'1rem',
+                                background:'#0a0a0a',
+                                border:'1px solid #333',
+                                borderRadius:'10px',
+                                color:'#fff',
+                                fontSize:'1.5rem',
+                                textAlign:'center',
+                                letterSpacing:'0.5rem'
+                            }} 
+                        />
+                        <p style={{color:'#666',fontSize:'0.85rem',marginTop:'0.5rem'}}>💡 Use um PIN único que ninguém mais usa</p>
+                    </div>
+                    
+                    {/* Perfil/Função */}
+                    <div>
+                        <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>Perfil de Acesso</label>
+                        <div style={{display:'grid',gap:'0.8rem'}}>
+                            {roleOptions.map(role => (
+                                <div
+                                    key={role.value}
+                                    onClick={() => setD({...d, role: role.value})}
+                                    style={{
+                                        padding:'1rem',
+                                        background: d.role === role.value ? '#d4a574' : '#0a0a0a',
+                                        border: `2px solid ${d.role === role.value ? '#d4a574' : '#333'}`,
+                                        borderRadius:'10px',
+                                        cursor:'pointer',
+                                        transition:'all 0.3s'
+                                    }}
+                                >
+                                    <div style={{
+                                        fontWeight:'800',
+                                        marginBottom:'0.3rem',
+                                        color: d.role === role.value ? '#000' : '#fff'
+                                    }}>
+                                        {role.label}
+                                    </div>
+                                    <div style={{
+                                        fontSize:'0.85rem',
+                                        color: d.role === role.value ? '#333' : '#888'
+                                    }}>
+                                        {role.desc}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    
+                    {/* Status */}
+                    <div>
+                        <label style={{display:'flex',alignItems:'center',gap:'0.8rem',cursor:'pointer',padding:'1rem',background:'#0a0a0a',borderRadius:'10px',border:'1px solid #333'}}>
+                            <input 
+                                type="checkbox" 
+                                checked={d.active} 
+                                onChange={e => setD({...d, active: e.target.checked})}
+                                style={{width:'20px',height:'20px',cursor:'pointer'}}
+                            />
+                            <div>
+                                <div style={{fontWeight:'800',color:'#fff'}}>Usuário Ativo</div>
+                                <div style={{fontSize:'0.85rem',color:'#888'}}>Permitir login no sistema</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                {/* Botões */}
+                <div style={{display:'flex',gap:'1rem',marginTop:'2rem'}}>
+                    {edit && d.canEdit !== false && (
+                        <button 
+                            onClick={del} 
+                            style={{
+                                padding:'1rem 1.5rem',
+                                background:'#e74c3c',
+                                border:'none',
+                                borderRadius:'10px',
+                                color:'#fff',
+                                fontWeight:'800',
+                                cursor:'pointer',
+                                fontSize:'0.95rem'
+                            }}
+                        >
+                            🗑️ EXCLUIR
+                        </button>
+                    )}
+                    <button 
+                        onClick={onClose} 
+                        style={{
+                            flex:1,
+                            padding:'1rem',
+                            background:'#2a2a2a',
+                            border:'none',
+                            borderRadius:'10px',
+                            color:'#888',
+                            fontWeight:'800',
+                            cursor:'pointer',
+                            fontSize:'0.95rem'
+                        }}
+                    >
+                        CANCELAR
+                    </button>
+                    <button 
+                        onClick={save} 
+                        style={{
+                            flex:1,
+                            padding:'1rem',
+                            background:'linear-gradient(135deg, #4a9d4e, #45a049)',
+                            border:'none',
+                            borderRadius:'10px',
+                            color:'#fff',
+                            fontWeight:'800',
+                            cursor:'pointer',
+                            fontSize:'0.95rem',
+                            boxShadow:'0 4px 15px rgba(74,157,78,0.3)'
+                        }}
+                    >
+                        💾 SALVAR
+                    </button>
                 </div>
             </div>
         </div>
