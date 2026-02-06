@@ -2496,10 +2496,22 @@ function NotificationBadge({count}) {
 function Waiter({tables, products, config, user, setView}) {
     const [cart, setCart] = useState([]);
     const [orderingFor, setOrderingFor] = useState(null);
+    const [showChat, setShowChat] = useState(false);
+    const [selectedTable, setSelectedTable] = useState(null);
+    const [chatMessage, setChatMessage] = useState('');
+    
     const myTables = tables.filter(t => t.waiter === user.waiterId && t.status === 'ocupada');
     const pendingCount = myTables.reduce((s, t) => s + (t.pending ? t.pending.length : 0), 0);
     const totalSales = myTables.reduce((s, t) => s + t.total, 0);
-    const callingCount = myTables.reduce((s, t) => s + (t.calling ? 1 : 0), 0);
+    const callingCount = myTables.filter(t => t.callWaiter).length;
+    
+    // Contar mensagens não lidas de todas as mesas
+    const unreadMessagesCount = myTables.reduce((total, table) => {
+        if (table.messages) {
+            return total + table.messages.filter(m => m.from === 'customer' && !m.read).length;
+        }
+        return total;
+    }, 0);
     
     const sendOrder = () => {
         if (!orderingFor || cart.length === 0) return;
@@ -2511,7 +2523,6 @@ function Waiter({tables, products, config, user, setView}) {
             orderId: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
         }));
         
-        // Usar once para pegar o valor atual e garantir que não duplica
         const pendingRef = db.ref(`tables/${orderingFor.id}/pending`);
         pendingRef.once('value').then(snapshot => {
             const currentPending = snapshot.val() || [];
@@ -2525,6 +2536,67 @@ function Waiter({tables, products, config, user, setView}) {
         playSound();
     };
     
+    const confirmPending = (tableId, idx) => {
+        const t = tables.find(x => x.id === tableId);
+        if (!t || !t.pending || !t.pending[idx]) return;
+        
+        const item = t.pending[idx];
+        const newOrders = [...(t.orders || []), {...item, confirmedAt: Date.now()}];
+        const newPending = t.pending.filter((_, i) => i !== idx);
+        
+        const itemTotal = item.price * item.quantity;
+        const newSubtotal = (t.subtotal || 0) + itemTotal;
+        const newTotal = newSubtotal;
+        
+        db.ref(`tables/${tableId}`).update({
+            orders: newOrders,
+            pending: newPending,
+            subtotal: newSubtotal,
+            total: newTotal
+        }).then(() => {
+            playSound();
+        });
+    };
+    
+    const confirmAllPending = (tableId) => {
+        const t = tables.find(x => x.id === tableId);
+        if (!t || !t.pending || t.pending.length === 0) return;
+        
+        if (!confirm(`Confirmar TODOS os ${t.pending.length} pedidos?`)) return;
+        
+        const newOrders = [...(t.orders || []), ...t.pending.map(p => ({...p, confirmedAt: Date.now()}))];
+        const pendingTotal = t.pending.reduce((sum, p) => sum + (p.price * p.quantity), 0);
+        const newSubtotal = (t.subtotal || 0) + pendingTotal;
+        
+        db.ref(`tables/${tableId}`).update({
+            orders: newOrders,
+            pending: [],
+            subtotal: newSubtotal,
+            total: newSubtotal
+        }).then(() => {
+            playSound();
+            alert('✅ Todos os pedidos confirmados!');
+        });
+    };
+    
+    const sendChatMessage = () => {
+        if (!chatMessage.trim() || !selectedTable) return;
+        
+        const newMessage = {
+            text: chatMessage,
+            from: 'waiter',
+            senderName: user.name,
+            timestamp: Date.now(),
+            read: false
+        };
+        
+        const messages = selectedTable.messages || [];
+        db.ref(`tables/${selectedTable.id}/messages`).set([...messages, newMessage]);
+        
+        setChatMessage('');
+        playSound();
+    };
+    
     const grouped = products.filter(p => p.active).reduce((acc, p) => {
         if (!acc[p.category]) acc[p.category] = [];
         acc[p.category].push(p);
@@ -2532,107 +2604,293 @@ function Waiter({tables, products, config, user, setView}) {
     }, {});
     
     return (
-        <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
-            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',position:'sticky',top:0,zIndex:100}}>
+        <div className="fade-in" style={{minHeight:'100vh',background:'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%)'}}>
+            {/* Header Moderno */}
+            <header className="glass" style={{
+                padding:'1.5rem',
+                borderBottom:'1px solid rgba(255,255,255,0.1)',
+                position:'sticky',
+                top:0,
+                zIndex:100,
+                backdropFilter:'blur(20px)'
+            }}>
                 <div style={{maxWidth:'1400px',margin:'0 auto',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                     <div>
-                        <h1 style={{fontSize:'2rem',color:'#3498db',fontWeight:'900',margin:0}}>👨‍🍳 {user.name}</h1>
-                        <p style={{color:'#888',fontSize:'0.9rem',margin:0}}>Garçom</p>
+                        <h1 className="gradient-text" style={{fontSize:'2rem',fontWeight:'900',margin:0,letterSpacing:'-0.5px'}}>
+                            👨‍🍳 {user.name}
+                        </h1>
+                        <p style={{color:'var(--text-secondary)',fontSize:'0.9rem',margin:0,fontWeight:'500'}}>Garçom</p>
                     </div>
-                    <button onClick={() => setView('login')} style={{padding:'0.8rem 1.8rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                    <button 
+                        onClick={() => setView('login')} 
+                        className="btn btn-primary"
+                        style={{padding:'0.8rem 1.8rem'}}
+                    >
+                        SAIR
+                    </button>
                 </div>
             </header>
-            <div style={{background:'#0f0f0f',padding:'1.5rem',borderBottom:'2px solid #222'}}>
+            
+            {/* Dashboard de Estatísticas */}
+            <div style={{padding:'2rem',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
                 <div style={{maxWidth:'1400px',margin:'0 auto',display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'1.5rem'}}>
-                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center'}}>
+                    <div className="card" style={{textAlign:'center',background:'linear-gradient(135deg, rgba(52,152,219,0.1), rgba(41,128,185,0.05))'}}>
                         <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🍽️</div>
-                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Minhas Mesas</div>
-                        <div style={{fontSize:'2rem',fontWeight:'900',color:'#3498db'}}>{myTables.length}</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.9rem',marginBottom:'0.3rem',fontWeight:'600'}}>Minhas Mesas</div>
+                        <div style={{fontSize:'2.5rem',fontWeight:'900',color:'var(--info)'}}>{myTables.length}</div>
                     </div>
-                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center',position:'relative'}}>
+                    <div className="card" style={{textAlign:'center',background:callingCount > 0 ? 'linear-gradient(135deg, rgba(243,156,18,0.1), rgba(230,126,34,0.05))' : 'rgba(255,255,255,0.02)',position:'relative'}}>
                         <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🔔</div>
-                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Chamados</div>
-                        <div style={{fontSize:'2rem',fontWeight:'900',color:callingCount > 0 ? '#f39c12' : '#888'}}>{callingCount}</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.9rem',marginBottom:'0.3rem',fontWeight:'600'}}>Chamadas</div>
+                        <div style={{fontSize:'2.5rem',fontWeight:'900',color:callingCount > 0 ? 'var(--warning)' : 'var(--text-secondary)'}}>{callingCount}</div>
                         {callingCount > 0 && <NotificationBadge count={callingCount} />}
                     </div>
-                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center',position:'relative'}}>
-                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>🔔</div>
-                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Pedidos Pendentes</div>
-                        <div style={{fontSize:'2rem',fontWeight:'900',color:pendingCount > 0 ? '#e74c3c' : '#4a9d4e'}}>{pendingCount}</div>
+                    <div className="card" style={{textAlign:'center',background:pendingCount > 0 ? 'linear-gradient(135deg, rgba(231,76,60,0.1), rgba(192,57,43,0.05))' : 'rgba(255,255,255,0.02)',position:'relative'}}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>📋</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.9rem',marginBottom:'0.3rem',fontWeight:'600'}}>Pendentes</div>
+                        <div style={{fontSize:'2.5rem',fontWeight:'900',color:pendingCount > 0 ? 'var(--danger)' : 'var(--accent)'}}>{pendingCount}</div>
                         {pendingCount > 0 && <NotificationBadge count={pendingCount} />}
                     </div>
-                    <div style={{background:'#1a1a1a',padding:'1.5rem',borderRadius:'12px',border:'2px solid #333',textAlign:'center'}}>
+                    <div className="card" style={{textAlign:'center',background:'linear-gradient(135deg, rgba(74,157,78,0.1), rgba(69,160,73,0.05))'}}>
                         <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>💰</div>
-                        <div style={{color:'#888',fontSize:'0.9rem',marginBottom:'0.3rem'}}>Vendas</div>
-                        <div style={{fontSize:'2rem',fontWeight:'900',color:'#4a9d4e'}}>{config.currency} {totalSales.toFixed(2)}</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.9rem',marginBottom:'0.3rem',fontWeight:'600'}}>Vendas</div>
+                        <div style={{fontSize:'2rem',fontWeight:'900',color:'var(--accent)'}}>{config.currency} {totalSales.toFixed(2)}</div>
+                    </div>
+                    <div className="card" style={{textAlign:'center',background:unreadMessagesCount > 0 ? 'linear-gradient(135deg, rgba(52,152,219,0.1), rgba(41,128,185,0.05))' : 'rgba(255,255,255,0.02)',position:'relative',cursor:'pointer'}} onClick={() => {
+                        const tableWithMessages = myTables.find(t => t.messages && t.messages.some(m => m.from === 'customer' && !m.read));
+                        if (tableWithMessages) {
+                            setSelectedTable(tableWithMessages);
+                            setShowChat(true);
+                        }
+                    }}>
+                        <div style={{fontSize:'2.5rem',marginBottom:'0.5rem'}}>💬</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.9rem',marginBottom:'0.3rem',fontWeight:'600'}}>Mensagens</div>
+                        <div style={{fontSize:'2.5rem',fontWeight:'900',color:unreadMessagesCount > 0 ? 'var(--info)' : 'var(--text-secondary)'}}>{unreadMessagesCount}</div>
+                        {unreadMessagesCount > 0 && <NotificationBadge count={unreadMessagesCount} />}
                     </div>
                 </div>
             </div>
-            <main style={{padding:'2rem',maxWidth:'1400px',margin:'0 auto'}}>
+            
+            {/* Área Principal - Mesas */}
+            <main style={{padding:'2rem',maxWidth:'1400px',margin:'0 auto',paddingBottom:'150px'}}>
                 {!orderingFor ? (
                     <div>
-                        <h2 style={{color:'#3498db',fontSize:'1.8rem',marginBottom:'1.5rem'}}>Minhas Mesas</h2>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2rem'}}>
+                            <h2 className="gradient-text" style={{fontSize:'2rem',fontWeight:'900',margin:0}}>Minhas Mesas</h2>
+                            {myTables.length > 0 && (
+                                <div style={{color:'var(--text-secondary)',fontSize:'0.95rem',fontWeight:'600'}}>
+                                    {myTables.length} {myTables.length === 1 ? 'mesa' : 'mesas'} ativa{myTables.length === 1 ? '' : 's'}
+                                </div>
+                            )}
+                        </div>
+                        
                         {myTables.length === 0 ? (
-                            <div style={{textAlign:'center',padding:'4rem',color:'#888'}}>
-                                <div style={{fontSize:'4rem',marginBottom:'1rem'}}>🍽️</div>
-                                <h3 style={{fontSize:'1.5rem'}}>Nenhuma mesa atribuída</h3>
-                                <p>Peça ao admin para abrir mesas</p>
+                            <div className="card" style={{textAlign:'center',padding:'4rem',marginTop:'3rem'}}>
+                                <div style={{fontSize:'5rem',marginBottom:'1.5rem',opacity:0.5}}>🍽️</div>
+                                <h3 style={{fontSize:'1.8rem',marginBottom:'0.8rem',fontWeight:'700'}}>Nenhuma mesa atribuída</h3>
+                                <p style={{color:'var(--text-secondary)',fontSize:'1rem'}}>Aguarde o admin abrir mesas para você</p>
                             </div>
                         ) : (
-                            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'1.5rem'}}>
+                            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:'1.5rem'}}>
                                 {myTables.map(t => {
                                     const hasPending = t.pending && t.pending.length > 0;
                                     const hasOrders = t.orders && t.orders.length > 0;
                                     const isCallingWaiter = t.callWaiter;
+                                    const hasMessages = t.messages && t.messages.some(m => m.from === 'customer' && !m.read);
+                                    const unreadCount = hasMessages ? t.messages.filter(m => m.from === 'customer' && !m.read).length : 0;
+                                    
+                                    let borderColor = 'var(--info)';
+                                    if (isCallingWaiter) borderColor = 'var(--warning)';
+                                    else if (hasPending) borderColor = 'var(--danger)';
+                                    else if (hasOrders) borderColor = 'var(--accent)';
+                                    
                                     return (
-                                        <div key={t.id} style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:isCallingWaiter?'3px solid #f39c12':hasPending?'3px solid #e74c3c':hasOrders?'3px solid #4a9d4e':'3px solid #3498db',position:'relative',animation:hasPending||isCallingWaiter?'blink 1.5s infinite':'none'}}>
-                                            {hasPending && <NotificationBadge count={t.pending.length} />}
-                                            {isCallingWaiter && (
+                                        <div 
+                                            key={t.id} 
+                                            className="card" 
+                                            style={{
+                                                position:'relative',
+                                                border:`2px solid ${borderColor}`,
+                                                animation: (hasPending || isCallingWaiter) ? 'pulse 2s infinite' : 'none',
+                                                cursor:'pointer',
+                                                transition:'all 0.3s ease'
+                                            }}
+                                            onClick={() => setOrderingFor(t)}
+                                        >
+                                            {/* Badges de Notificação */}
+                                            {hasPending && (
                                                 <div style={{
                                                     position:'absolute',
                                                     top:'-10px',
-                                                    left:'-10px',
-                                                    background:'#f39c12',
+                                                    right:'-10px',
+                                                    background:'var(--danger)',
                                                     color:'#fff',
-                                                    padding:'0.5rem 1rem',
-                                                    borderRadius:'20px',
+                                                    borderRadius:'50%',
+                                                    width:'32px',
+                                                    height:'32px',
+                                                    display:'flex',
+                                                    alignItems:'center',
+                                                    justifyContent:'center',
                                                     fontWeight:'900',
                                                     fontSize:'0.9rem',
-                                                    boxShadow:'0 4px 12px rgba(243,156,18,0.5)',
-                                                    animation:'pulse 1s infinite'
+                                                    boxShadow:'0 4px 12px rgba(231,76,60,0.5)',
+                                                    zIndex:10
                                                 }}>
-                                                    🔔 CHAMANDO
+                                                    {t.pending.length}
                                                 </div>
                                             )}
-                                            <div style={{fontSize:'3rem',textAlign:'center',marginBottom:'1rem'}}>🍽️</div>
-                                            <div style={{fontSize:'2rem',fontWeight:'900',textAlign:'center',marginBottom:'1rem'}}>Mesa {t.id}</div>
-                                            {t.customerName && <div style={{color:'#888',textAlign:'center',marginBottom:'1rem'}}>{t.customerName}</div>}
-                                            <div style={{background:'#0a0a0a',padding:'1rem',borderRadius:'12px',textAlign:'center',marginBottom:'1rem'}}>
-                                                <div style={{color:'#888',fontSize:'0.8rem'}}>Total</div>
-                                                <div style={{fontSize:'1.8rem',fontWeight:'900',color:'#3498db'}}>{config.currency} {t.total.toFixed(2)}</div>
-                                            </div>
-                                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.8rem',fontSize:'0.85rem',marginBottom:'1rem'}}>
-                                                <div style={{background:'#0a0a0a',padding:'0.8rem',borderRadius:'8px',textAlign:'center'}}>
-                                                    <div style={{color:'#4a9d4e',fontWeight:'800'}}>{t.orders ? t.orders.length : 0}</div>
-                                                    <div style={{color:'#888',fontSize:'0.75rem'}}>Confirmados</div>
+                                            
+                                            {isCallingWaiter && (
+                                                <div style={{
+                                                    position:'absolute',
+                                                    top:'-12px',
+                                                    left:'50%',
+                                                    transform:'translateX(-50%)',
+                                                    background:'var(--warning)',
+                                                    color:'#000',
+                                                    padding:'0.5rem 1.2rem',
+                                                    borderRadius:'20px',
+                                                    fontWeight:'900',
+                                                    fontSize:'0.85rem',
+                                                    boxShadow:'0 4px 15px rgba(243,156,18,0.6)',
+                                                    animation:'pulse 1s infinite',
+                                                    whiteSpace:'nowrap'
+                                                }}>
+                                                    🔔 CHAMANDO VOCÊ!
                                                 </div>
-                                                <div style={{background:'#0a0a0a',padding:'0.8rem',borderRadius:'8px',textAlign:'center'}}>
-                                                    <div style={{color:hasPending?'#e74c3c':'#888',fontWeight:'800'}}>{t.pending ? t.pending.length : 0}</div>
-                                                    <div style={{color:'#888',fontSize:'0.75rem'}}>Pendentes</div>
+                                            )}
+                                            
+                                            {/* Ícone e Número da Mesa */}
+                                            <div style={{textAlign:'center',marginTop: isCallingWaiter ? '1.5rem' : '0'}}>
+                                                <div style={{fontSize:'3.5rem',marginBottom:'0.5rem'}}>🍽️</div>
+                                                <div style={{
+                                                    fontSize:'2.5rem',
+                                                    fontWeight:'900',
+                                                    color:borderColor,
+                                                    marginBottom:'0.5rem',
+                                                    letterSpacing:'-1px'
+                                                }}>
+                                                    Mesa {t.id}
                                                 </div>
+                                                {t.customerName && (
+                                                    <div style={{
+                                                        color:'var(--text-secondary)',
+                                                        fontSize:'0.95rem',
+                                                        fontWeight:'600',
+                                                        marginBottom:'1rem'
+                                                    }}>
+                                                        👤 {t.customerName}
+                                                    </div>
+                                                )}
                                             </div>
-                                            {isCallingWaiter ? (
-                                                <button 
-                                                    onClick={() => {
-                                                        db.ref(`tables/${t.id}/callWaiter`).set(false);
-                                                        alert('✅ Chamado atendido!');
-                                                    }} 
-                                                    style={{width:'100%',padding:'1rem',background:'#f39c12',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',marginBottom:'0.5rem'}}
+                                            
+                                            {/* Total */}
+                                            <div style={{
+                                                background:'rgba(212,165,116,0.1)',
+                                                padding:'1.2rem',
+                                                borderRadius:'12px',
+                                                textAlign:'center',
+                                                marginBottom:'1rem',
+                                                border:'1px solid rgba(212,165,116,0.2)'
+                                            }}>
+                                                <div style={{color:'var(--text-secondary)',fontSize:'0.85rem',fontWeight:'600',marginBottom:'0.3rem'}}>TOTAL</div>
+                                                <div style={{fontSize:'2rem',fontWeight:'900',color:'var(--primary)'}}>{config.currency} {t.total.toFixed(2)}</div>
+                                            </div>
+                                            
+                                            {/* Estatísticas */}
+                                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'0.8rem',marginBottom:'1.2rem'}}>
+                                                <div style={{
+                                                    background:'rgba(74,157,78,0.1)',
+                                                    padding:'0.8rem 0.5rem',
+                                                    borderRadius:'10px',
+                                                    textAlign:'center',
+                                                    border:'1px solid rgba(74,157,78,0.2)'
+                                                }}>
+                                                    <div style={{color:'var(--accent)',fontWeight:'900',fontSize:'1.3rem'}}>{t.orders ? t.orders.length : 0}</div>
+                                                    <div style={{color:'var(--text-secondary)',fontSize:'0.7rem',fontWeight:'600'}}>Confirmados</div>
+                                                </div>
+                                                <div style={{
+                                                    background: hasPending ? 'rgba(231,76,60,0.1)' : 'rgba(255,255,255,0.03)',
+                                                    padding:'0.8rem 0.5rem',
+                                                    borderRadius:'10px',
+                                                    textAlign:'center',
+                                                    border: hasPending ? '1px solid rgba(231,76,60,0.2)' : '1px solid rgba(255,255,255,0.05)'
+                                                }}>
+                                                    <div style={{color:hasPending?'var(--danger)':'var(--text-secondary)',fontWeight:'900',fontSize:'1.3rem'}}>{t.pending ? t.pending.length : 0}</div>
+                                                    <div style={{color:'var(--text-secondary)',fontSize:'0.7rem',fontWeight:'600'}}>Pendentes</div>
+                                                </div>
+                                                <div 
+                                                    style={{
+                                                        background: hasMessages ? 'rgba(52,152,219,0.1)' : 'rgba(255,255,255,0.03)',
+                                                        padding:'0.8rem 0.5rem',
+                                                        borderRadius:'10px',
+                                                        textAlign:'center',
+                                                        border: hasMessages ? '1px solid rgba(52,152,219,0.2)' : '1px solid rgba(255,255,255,0.05)',
+                                                        cursor: hasMessages ? 'pointer' : 'default'
+                                                    }}
+                                                    onClick={(e) => {
+                                                        if (hasMessages) {
+                                                            e.stopPropagation();
+                                                            setSelectedTable(t);
+                                                            setShowChat(true);
+                                                        }
+                                                    }}
                                                 >
-                                                    ✓ ATENDER CHAMADO
+                                                    <div style={{color:hasMessages?'var(--info)':'var(--text-secondary)',fontWeight:'900',fontSize:'1.3rem'}}>
+                                                        {hasMessages ? unreadCount : '💬'}
+                                                    </div>
+                                                    <div style={{color:'var(--text-secondary)',fontSize:'0.7rem',fontWeight:'600'}}>Mensagens</div>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Botões de Ação */}
+                                            <div style={{display:'grid',gap:'0.8rem'}}>
+                                                {isCallingWaiter && (
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            db.ref(`tables/${t.id}/callWaiter`).set(false);
+                                                            playSound();
+                                                            alert('✅ Chamado atendido!');
+                                                        }} 
+                                                        className="btn"
+                                                        style={{
+                                                            background:'linear-gradient(135deg, var(--warning), #e67e22)',
+                                                            color:'#000',
+                                                            boxShadow:'0 4px 15px rgba(243,156,18,0.4)'
+                                                        }}
+                                                    >
+                                                        ✓ ATENDER CHAMADO
+                                                    </button>
+                                                )}
+                                                
+                                                {hasPending && (
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            confirmAllPending(t.id);
+                                                        }} 
+                                                        className="btn btn-success"
+                                                    >
+                                                        ✓ CONFIRMAR TODOS ({t.pending.length})
+                                                    </button>
+                                                )}
+                                                
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setOrderingFor(t);
+                                                    }}
+                                                    className="btn"
+                                                    style={{
+                                                        background:'linear-gradient(135deg, var(--info), #2980b9)',
+                                                        color:'#fff',
+                                                        boxShadow:'0 4px 15px rgba(52,152,219,0.3)'
+                                                    }}
+                                                >
+                                                    + FAZER PEDIDO
                                                 </button>
-                                            ) : null}
-                                            <button onClick={() => setOrderingFor(t)} style={{width:'100%',padding:'1rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>+ FAZER PEDIDO</button>
+                                            </div>
                                         </div>
                                     );
                                 })}
