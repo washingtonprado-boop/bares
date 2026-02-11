@@ -43,6 +43,35 @@
             --shadow: rgba(0, 0, 0, 0.3);
         }
         
+        /* MODO CLARO */
+        [data-theme="light"] {
+            --primary: #d4a574;
+            --primary-dark: #b8915f;
+            --primary-light: #f5e6d3;
+            --secondary: #f5f5f5;
+            --accent: #4a9d4e;
+            --danger: #e74c3c;
+            --warning: #f39c12;
+            --info: #3498db;
+            --background: #ffffff;
+            --surface: #f8f9fa;
+            --surface-light: #ffffff;
+            --text: #2c3e50;
+            --text-secondary: #6c757d;
+            --border: #dee2e6;
+            --shadow: rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Transição suave ao mudar tema */
+        body, 
+        div, 
+        button, 
+        input, 
+        select, 
+        textarea {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+        
         body {
             font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: var(--background);
@@ -358,6 +387,23 @@ function App() {
     const [sales, setSales] = useState([]);
     const prevTables = useRef([]);
     
+    // Estado do tema (modo claro/escuro)
+    const [theme, setTheme] = useState(() => {
+        // Carregar tema salvo ou usar escuro como padrão
+        return localStorage.getItem('theme') || 'dark';
+    });
+    
+    // Aplicar tema ao documento
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+    }, [theme]);
+    
+    // Função para alternar tema
+    const toggleTheme = () => {
+        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+    };
+    
     useEffect(() => {
         if (!db) {setLoading(false); return;}
         
@@ -433,7 +479,7 @@ function App() {
     
     if (loading) return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}><h2 style={{color:'#d4a574'}}>Carregando...</h2></div>;
     
-    const props = {config, products, waiters, tables, sales, user, setUser, setView};
+    const props = {config, products, waiters, tables, sales, user, setUser, setView, theme, toggleTheme};
     
     if (view === 'login') return <Login {...props} />;
     if (view === 'master') return <Master {...props} />;
@@ -443,7 +489,44 @@ function App() {
     if (view === 'customer') return <Customer {...props} />;
 }
 
-function Login({config, tables, waiters, setUser, setView}) {
+// Componente de Alternância de Tema
+function ThemeToggle({theme, toggleTheme, style = {}}) {
+    return (
+        <button
+            onClick={toggleTheme}
+            style={{
+                padding: '0.8rem',
+                background: 'var(--surface)',
+                border: '2px solid var(--border)',
+                borderRadius: '50%',
+                color: 'var(--text)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.3rem',
+                width: '45px',
+                height: '45px',
+                transition: 'all 0.3s ease',
+                boxShadow: '0 2px 8px var(--shadow)',
+                ...style
+            }}
+            onMouseEnter={e => {
+                e.currentTarget.style.transform = 'scale(1.1) rotate(15deg)';
+                e.currentTarget.style.borderColor = 'var(--primary)';
+            }}
+            onMouseLeave={e => {
+                e.currentTarget.style.transform = 'scale(1) rotate(0deg)';
+                e.currentTarget.style.borderColor = 'var(--border)';
+            }}
+            title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+        >
+            {theme === 'dark' ? '☀️' : '🌙'}
+        </button>
+    );
+}
+
+function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) {
     const [mode, setMode] = useState('staff');
     const [pin, setPin] = useState('');
     const [mesa, setMesa] = useState('');
@@ -556,6 +639,11 @@ function Login({config, tables, waiters, setUser, setView}) {
                 position:'relative',
                 zIndex:1
             }}>
+                {/* Botão de Tema */}
+                <div style={{position:'absolute',top:'1.5rem',right:'1.5rem',zIndex:10}}>
+                    <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                </div>
+                
                 {/* Logo e Nome do Bar */}
                 <div style={{textAlign:'center',marginBottom:'3rem'}}>
                     {config.logo ? (
@@ -842,7 +930,7 @@ function Login({config, tables, waiters, setUser, setView}) {
 }
 
 
-function Master({config, products, waiters, tables, sales, setView}) {
+function Master({config, products, waiters, tables, sales, setView, theme, toggleTheme}) {
     const [tab, setTab] = useState('config');
     const [modal, setModal] = useState(null);
     const [edit, setEdit] = useState(null);
@@ -885,12 +973,15 @@ function Master({config, products, waiters, tables, sales, setView}) {
     
     return (
         <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
-            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <header style={{background:'var(--surface)',padding:'1.5rem',borderBottom:'2px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
                     {config.logo && <img src={config.logo} alt={config.barName} style={{maxWidth:'150px',height:'100px'}} />}
-                    <h1 style={{color:'#d4a574',fontSize:'1.8rem',fontWeight:'900'}}>👑 MASTER</h1>
+                    <h1 style={{color:'var(--primary)',fontSize:'1.8rem',fontWeight:'900'}}>👑 MASTER</h1>
                 </div>
-                <button onClick={() => setView('login')} style={{padding:'0.8rem 1.5rem',background:'#d4a574',border:'none',borderRadius:'10px',color:'#000',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                    <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                    <button onClick={() => setView('login')} style={{padding:'0.8rem 1.5rem',background:'var(--primary)',border:'none',borderRadius:'10px',color:'#000',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                </div>
             </header>
             
             <nav style={{background:'#0f0f0f',borderBottom:'2px solid #222',display:'flex',overflowX:'auto'}}>
@@ -943,7 +1034,38 @@ function Master({config, products, waiters, tables, sales, setView}) {
                                     {(sales || []).length}
                                 </div>
                             </div>
+                            <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',border:'3px solid #9b59b6',textAlign:'center'}}>
+                                <div style={{fontSize:'3rem'}}>🛵</div>
+                                <div style={{color:'#888',fontSize:'0.9rem'}}>Vendas Delivery</div>
+                                <div style={{fontSize:'2.5rem',fontWeight:'900',color:'#9b59b6'}}>
+                                    {(sales || []).filter(s => s.type === 'delivery').length}
+                                </div>
+                                <div style={{fontSize:'1rem',fontWeight:'700',color:'#9b59b6',marginTop:'0.3rem'}}>
+                                    {config.currency} {(sales || []).filter(s => s.type === 'delivery').reduce((sum,s)=>sum+s.total,0).toFixed(2)}
+                                </div>
+                            </div>
                         </div>
+                        
+                        {/* Relatório Delivery */}
+                        {(sales||[]).filter(s=>s.type==='delivery').length > 0 && (
+                        <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',marginBottom:'2rem',border:'2px solid #9b59b6'}}>
+                            <h3 style={{color:'#9b59b6',fontSize:'1.5rem',marginBottom:'1.5rem'}}>🛵 Histórico Delivery</h3>
+                            {(sales||[]).filter(s=>s.type==='delivery').slice(0,10).map(s=>(
+                                <div key={s.id} style={{background:'#0a0a0a',padding:'1.2rem',borderRadius:'12px',marginBottom:'0.8rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                    <div>
+                                        <div style={{fontWeight:'800',fontSize:'1.1rem'}}>{s.customerName}</div>
+                                        <div style={{color:'#888',fontSize:'0.85rem'}}>📞 {s.customerPhone} · 📍 {s.address}</div>
+                                        <div style={{color:'#888',fontSize:'0.85rem'}}>
+                                            {s.payment === 'dinheiro' ? '💵 Dinheiro' : s.payment === 'pix' ? '💠 PIX' : '💳 Cartão'}
+                                            {s.troco > 0 ? ` · Troco p/ ${config.currency} ${s.troco.toFixed(2)}` : ''}
+                                            · {new Date(s.date).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}
+                                        </div>
+                                    </div>
+                                    <div style={{fontSize:'1.5rem',fontWeight:'900',color:'#9b59b6'}}>{config.currency} {s.total.toFixed(2)}</div>
+                                </div>
+                            ))}
+                        </div>
+                        )}
                         
                         <div style={{background:'#1a1a1a',padding:'2rem',borderRadius:'16px',marginBottom:'2rem'}}>
                             <h3 style={{color:'#d4a574',fontSize:'1.5rem',marginBottom:'1.5rem'}}>👨‍🍳 Performance dos Garçons</h3>
@@ -1976,7 +2098,7 @@ function UserModal({edit, onClose}) {
 }
 
 
-function Admin({tables, waiters, products, config, sales, setView}) {
+function Admin({tables, waiters, products, config, sales, setView, theme, toggleTheme}) {
     const [tab, setTab] = useState('mesas');
     const [selW, setSelW] = useState(null);
     const [qrModal, setQrModal] = useState(null);
@@ -2138,12 +2260,15 @@ function Admin({tables, waiters, products, config, sales, setView}) {
     
     return (
         <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
-            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <header style={{background:'var(--surface)',padding:'1.5rem',borderBottom:'2px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
                     {config.logo && <img src={config.logo} alt={config.barName} style={{maxWidth:'150px',height:'100px'}} />}
                     <h1 style={{color:'#4a9d4e',fontSize:'1.8rem',fontWeight:'900'}}>👨‍💼 ADMIN</h1>
                 </div>
-                <button onClick={() => setView('login')} style={{padding:'0.8rem 1.5rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                    <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                    <button onClick={() => setView('login')} style={{padding:'0.8rem 1.5rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                </div>
             </header>
             
             <nav style={{background:'#0f0f0f',borderBottom:'2px solid #222',display:'flex'}}>
@@ -2531,10 +2656,28 @@ function Admin({tables, waiters, products, config, sales, setView}) {
     );
 }
 
-function Balcao({tables, config, waiters, setView}) {
+function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}) {
     const [sel, setSel] = useState(null);
     const [selW, setSelW] = useState(null);
     const [qrModal, setQrModal] = useState(null);
+    const [tab, setTab] = useState('mesas');
+    const [deliveries, setDeliveries] = useState([]);
+    const [deliveryModal, setDeliveryModal] = useState(false);
+    
+    // Carregar deliveries do Firebase
+    useEffect(() => {
+        db.ref('deliveries').on('value', snap => {
+            if (snap.val()) {
+                const list = Object.values(snap.val()).sort((a,b) => b.createdAt - a.createdAt);
+                setDeliveries(list);
+            } else {
+                setDeliveries([]);
+            }
+        });
+        return () => db.ref('deliveries').off();
+    }, []);
+    
+    const deliveryPending = deliveries.filter(d => d.status === 'pendente' || d.status === 'preparando').length;
     
     const openTable = (id, wId) => {
         db.ref(`tables/${id}`).update({status: 'ocupada', waiter: wId});
@@ -2775,14 +2918,34 @@ function Balcao({tables, config, waiters, setView}) {
     const totalRevenue = tables.reduce((sum, t) => sum + t.total, 0);
     
     return (
-        <div style={{minHeight:'100vh',background:'#0a0a0a'}}>
-            <header style={{background:'#1a1a1a',padding:'1.5rem',borderBottom:'2px solid #333',position:'sticky',top:0,zIndex:100}}>
+        <div style={{minHeight:'100vh',background:'var(--background)'}}>
+            <header style={{background:'var(--surface)',padding:'1.5rem',borderBottom:'2px solid var(--border)',position:'sticky',top:0,zIndex:100}}>
                 <div style={{maxWidth:'1600px',margin:'0 auto',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                     <div>
                         <h1 style={{fontSize:'2rem',background:'linear-gradient(135deg,#e67e22,#d35400)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',fontWeight:'900',margin:0}}>🏪 BALCÃO</h1>
-                        <p style={{color:'#888',fontSize:'0.9rem',margin:0}}>Gestão de Pedidos</p>
+                        <p style={{color:'var(--text-secondary)',fontSize:'0.9rem',margin:0}}>Gestão de Pedidos</p>
                     </div>
-                    <button onClick={() => setView('login')} style={{padding:'0.8rem 1.8rem',background:'#e67e22',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                    <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                        <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                        <button onClick={() => setView('login')} style={{padding:'0.8rem 1.8rem',background:'#e67e22',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>SAIR</button>
+                    </div>
+                </div>
+                {/* Abas */}
+                <div style={{maxWidth:'1600px',margin:'0.8rem auto 0',display:'flex',gap:'0.5rem',overflowX:'auto'}}>
+                    {[
+                        {key:'mesas', label:'🍽️ MESAS'},
+                        {key:'delivery', label:`🛵 DELIVERY${deliveryPending > 0 ? ` (${deliveryPending})` : ''}`},
+                    ].map(t => (
+                        <button key={t.key} onClick={() => setTab(t.key)} style={{
+                            padding:'0.7rem 1.5rem',
+                            background: tab===t.key ? '#e67e22' : 'transparent',
+                            border: `2px solid ${tab===t.key ? '#e67e22' : 'var(--border)'}`,
+                            borderRadius:'10px',
+                            color: tab===t.key ? '#fff' : 'var(--text-secondary)',
+                            fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap',
+                            transition:'all 0.2s'
+                        }}>{t.label}</button>
+                    ))}
                 </div>
             </header>
             
@@ -2817,6 +2980,19 @@ function Balcao({tables, config, waiters, setView}) {
             </div>
             
             <main style={{padding:'2rem',maxWidth:'1600px',margin:'0 auto'}}>
+            
+            {/* ABA DELIVERY */}
+            {tab === 'delivery' && (
+                <DeliveryTab
+                    deliveries={deliveries}
+                    products={products}
+                    config={config}
+                    onNew={() => setDeliveryModal(true)}
+                />
+            )}
+            
+            {/* ABA MESAS */}
+            {tab === 'mesas' && (
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'2rem'}}>
                     {tables.map(t => {
                         const hasPending = t.pending && t.pending.length > 0;
@@ -2995,7 +3171,18 @@ function Balcao({tables, config, waiters, setView}) {
                         );
                     })}
                 </div>
+            )} {/* fim aba mesas */}
+            
             </main>
+            
+            {/* Modal delivery */}
+            {deliveryModal && (
+                <DeliveryModal
+                    products={products}
+                    config={config}
+                    onClose={() => setDeliveryModal(false)}
+                />
+            )}
             
             {sel && (
                 <div onClick={() => setSel(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.95)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'2rem',overflowY:'auto'}}>
@@ -3354,7 +3541,446 @@ function NotificationBadge({count}) {
     );
 }
 
-function Waiter({tables, products, config, user, setView}) {
+// ─── DELIVERY ────────────────────────────────────────────────
+
+function DeliveryTab({deliveries, products, config, onNew}) {
+    const statusColor = {
+        pendente:   '#e74c3c',
+        preparando: '#f39c12',
+        saiu:       '#3498db',
+        entregue:   '#4a9d4e',
+        cancelado:  '#6c757d',
+    };
+    const statusLabel = {
+        pendente:   '⏳ Pendente',
+        preparando: '👨‍🍳 Preparando',
+        saiu:       '🛵 Saiu p/ Entrega',
+        entregue:   '✅ Entregue',
+        cancelado:  '❌ Cancelado',
+    };
+    const nextStatus = {pendente:'preparando', preparando:'saiu', saiu:'entregue'};
+    const nextLabel  = {pendente:'▶ INICIAR PREPARO', preparando:'🛵 SAIU P/ ENTREGA', saiu:'✅ MARCAR ENTREGUE'};
+    
+    const advanceStatus = (d) => {
+        const next = nextStatus[d.status];
+        if (!next) return;
+        db.ref(`deliveries/${d.id}/status`).set(next);
+        if (next === 'entregue') {
+            // Salvar como venda delivery
+            const sale = {
+                id: Date.now(),
+                type: 'delivery',
+                tableId: null,
+                waiter: null,
+                waiterName: 'Delivery',
+                customerName: d.customerName,
+                customerPhone: d.phone,
+                address: d.address,
+                subtotal: d.subtotal,
+                deliveryFee: d.deliveryFee || 0,
+                tip: 0,
+                total: d.total,
+                payment: d.payment,
+                troco: d.troco || null,
+                orders: d.items,
+                date: new Date().toISOString(),
+                timestamp: Date.now()
+            };
+            db.ref(`sales/${sale.id}`).set(sale);
+            db.ref(`deliveries/${d.id}/closedAt`).set(Date.now());
+        }
+    };
+    
+    const cancelDelivery = (d) => {
+        if (!confirm(`Cancelar pedido de ${d.customerName}?`)) return;
+        db.ref(`deliveries/${d.id}/status`).set('cancelado');
+    };
+    
+    const active = deliveries.filter(d => d.status !== 'entregue' && d.status !== 'cancelado');
+    const done   = deliveries.filter(d => d.status === 'entregue' || d.status === 'cancelado');
+    
+    return (
+        <div>
+            {/* Header */}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2rem'}}>
+                <h2 style={{fontSize:'2rem',fontWeight:'900',color:'#e67e22',margin:0}}>🛵 Pedidos Delivery</h2>
+                <button onClick={onNew} style={{
+                    padding:'1rem 2rem',
+                    background:'linear-gradient(135deg,#e67e22,#d35400)',
+                    border:'none',borderRadius:'12px',color:'#fff',
+                    fontWeight:'800',cursor:'pointer',fontSize:'1rem',
+                    boxShadow:'0 4px 15px rgba(230,126,34,0.4)'
+                }}>+ NOVO PEDIDO</button>
+            </div>
+            
+            {/* Stats rápidos */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
+                {[
+                    {label:'Pendentes',    val: deliveries.filter(d=>d.status==='pendente').length,   color:'#e74c3c', icon:'⏳'},
+                    {label:'Preparando',  val: deliveries.filter(d=>d.status==='preparando').length,  color:'#f39c12', icon:'👨‍🍳'},
+                    {label:'Na Rua',      val: deliveries.filter(d=>d.status==='saiu').length,        color:'#3498db', icon:'🛵'},
+                    {label:'Entregues Hoje', val: deliveries.filter(d=>{
+                        if(d.status!=='entregue') return false;
+                        return new Date(d.closedAt||d.createdAt).toDateString()===new Date().toDateString();
+                    }).length, color:'#4a9d4e', icon:'✅'},
+                ].map(s => (
+                    <div key={s.label} style={{background:'var(--surface)',padding:'1.2rem',borderRadius:'12px',border:`2px solid ${s.color}`,textAlign:'center'}}>
+                        <div style={{fontSize:'2rem'}}>{s.icon}</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.8rem',fontWeight:'700'}}>{s.label}</div>
+                        <div style={{fontSize:'1.8rem',fontWeight:'900',color:s.color}}>{s.val}</div>
+                    </div>
+                ))}
+            </div>
+            
+            {/* Pedidos Ativos */}
+            {active.length === 0 && (
+                <div style={{textAlign:'center',padding:'4rem',background:'var(--surface)',borderRadius:'16px',border:'2px dashed var(--border)',marginBottom:'2rem'}}>
+                    <div style={{fontSize:'4rem',marginBottom:'1rem'}}>🛵</div>
+                    <h3 style={{fontSize:'1.5rem',color:'var(--text-secondary)'}}>Nenhum pedido ativo</h3>
+                    <p style={{color:'var(--text-secondary)'}}>Clique em "+ NOVO PEDIDO" para começar</p>
+                </div>
+            )}
+            
+            <div style={{display:'grid',gap:'1.5rem',marginBottom:'3rem'}}>
+                {active.map(d => (
+                    <div key={d.id} style={{
+                        background:'var(--surface)',
+                        borderRadius:'16px',
+                        border:`3px solid ${statusColor[d.status]}`,
+                        padding:'2rem',
+                        boxShadow:`0 4px 20px ${statusColor[d.status]}33`,
+                        animation: d.status==='pendente' ? 'pulse 2s infinite' : 'none'
+                    }}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:'1rem',marginBottom:'1.5rem'}}>
+                            <div>
+                                <div style={{display:'flex',alignItems:'center',gap:'0.8rem',marginBottom:'0.5rem'}}>
+                                    <span style={{
+                                        padding:'0.4rem 1rem',
+                                        background:statusColor[d.status],
+                                        borderRadius:'20px',
+                                        fontSize:'0.85rem',
+                                        fontWeight:'800',
+                                        color:'#fff'
+                                    }}>{statusLabel[d.status]}</span>
+                                    <span style={{color:'var(--text-secondary)',fontSize:'0.85rem'}}>
+                                        #{String(d.id).slice(-5)} · {new Date(d.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
+                                    </span>
+                                </div>
+                                <h3 style={{fontSize:'1.4rem',fontWeight:'900',margin:'0 0 0.3rem'}}>{d.customerName}</h3>
+                                <div style={{color:'var(--text-secondary)',fontSize:'0.95rem'}}>📞 {d.phone}</div>
+                                <div style={{color:'var(--text-secondary)',fontSize:'0.95rem'}}>📍 {d.address}</div>
+                            </div>
+                            <div style={{textAlign:'right'}}>
+                                <div style={{fontSize:'2rem',fontWeight:'900',color:'#e67e22'}}>{config.currency} {d.total.toFixed(2)}</div>
+                                <div style={{fontSize:'0.9rem',color:'var(--text-secondary)'}}>
+                                    {d.payment === 'dinheiro' ? `💵 Dinheiro${d.troco > 0 ? ` · Troco p/ ${config.currency} ${parseFloat(d.troco).toFixed(2)}` : ''}` : 
+                                     d.payment === 'pix' ? '💠 PIX' : '💳 Cartão'}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Itens */}
+                        <div style={{background:'var(--background)',borderRadius:'10px',padding:'1rem',marginBottom:'1.5rem'}}>
+                            {(d.items||[]).map((item,i) => (
+                                <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'0.4rem 0',borderBottom:'1px solid var(--border)'}}>
+                                    <span>{item.image} {item.quantity}x {item.name}</span>
+                                    <span style={{fontWeight:'700',color:'#e67e22'}}>{config.currency} {(item.price*item.quantity).toFixed(2)}</span>
+                                </div>
+                            ))}
+                            <div style={{display:'flex',justifyContent:'space-between',marginTop:'0.5rem',fontWeight:'700'}}>
+                                <span>Subtotal</span><span>{config.currency} {d.subtotal.toFixed(2)}</span>
+                            </div>
+                            {d.deliveryFee > 0 && (
+                                <div style={{display:'flex',justifyContent:'space-between',fontWeight:'700',color:'var(--text-secondary)'}}>
+                                    <span>Taxa de entrega</span><span>{config.currency} {parseFloat(d.deliveryFee).toFixed(2)}</span>
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* Ações */}
+                        <div style={{display:'flex',gap:'1rem',flexWrap:'wrap'}}>
+                            {nextStatus[d.status] && (
+                                <button onClick={() => advanceStatus(d)} style={{
+                                    flex:1,padding:'1rem',
+                                    background:`linear-gradient(135deg,${statusColor[nextStatus[d.status]]},${statusColor[nextStatus[d.status]]}cc)`,
+                                    border:'none',borderRadius:'10px',color:'#fff',
+                                    fontWeight:'800',cursor:'pointer',fontSize:'0.95rem',
+                                    minWidth:'160px'
+                                }}>{nextLabel[d.status]}</button>
+                            )}
+                            {d.status !== 'cancelado' && d.status !== 'entregue' && (
+                                <button onClick={() => cancelDelivery(d)} style={{
+                                    padding:'1rem 1.5rem',background:'transparent',
+                                    border:'2px solid #e74c3c',borderRadius:'10px',
+                                    color:'#e74c3c',fontWeight:'800',cursor:'pointer'
+                                }}>❌ CANCELAR</button>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+            
+            {/* Histórico */}
+            {done.length > 0 && (
+                <div>
+                    <h3 style={{color:'var(--text-secondary)',marginBottom:'1rem',fontWeight:'700'}}>📋 Histórico de Hoje</h3>
+                    <div style={{display:'grid',gap:'0.8rem'}}>
+                        {done.slice(0,10).map(d => (
+                            <div key={d.id} style={{
+                                background:'var(--surface)',borderRadius:'12px',
+                                padding:'1.2rem 1.5rem',
+                                border:`2px solid ${statusColor[d.status]}`,
+                                display:'flex',justifyContent:'space-between',alignItems:'center',
+                                opacity:0.7
+                            }}>
+                                <div>
+                                    <span style={{padding:'0.3rem 0.8rem',background:statusColor[d.status],borderRadius:'20px',fontSize:'0.8rem',fontWeight:'700',color:'#fff',marginRight:'0.8rem'}}>
+                                        {statusLabel[d.status]}
+                                    </span>
+                                    <strong>{d.customerName}</strong>
+                                    <span style={{color:'var(--text-secondary)',marginLeft:'0.5rem',fontSize:'0.85rem'}}>· {d.phone}</span>
+                                </div>
+                                <div style={{fontWeight:'900',color:'#e67e22'}}>{config.currency} {d.total.toFixed(2)}</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function DeliveryModal({products, config, onClose}) {
+    const [form, setForm] = useState({
+        customerName:'', phone:'', address:'', payment:'dinheiro', troco:'', deliveryFee:''
+    });
+    const [cart, setCart] = useState([]);
+    const [step, setStep] = useState(1); // 1=dados, 2=itens
+    const [catFilter, setCatFilter] = useState('Todos');
+    
+    const categories = ['Todos', ...new Set(products.filter(p=>p.active).map(p=>p.category))];
+    const filtered = products.filter(p => p.active && (catFilter==='Todos' || p.category===catFilter));
+    
+    const addItem = (p) => {
+        const ex = cart.find(i=>i.id===p.id);
+        if (ex) setCart(cart.map(i => i.id===p.id ? {...i, quantity:i.quantity+1} : i));
+        else setCart([...cart, {...p, quantity:1}]);
+    };
+    const removeItem = (id) => setCart(cart.map(i => i.id===id ? {...i, quantity:i.quantity-1} : i).filter(i=>i.quantity>0));
+    
+    const subtotal = cart.reduce((s,i)=>s+i.price*i.quantity, 0);
+    const deliveryFee = parseFloat(form.deliveryFee) || 0;
+    const total = subtotal + deliveryFee;
+    
+    const save = () => {
+        if (!form.customerName.trim()) { alert('❌ Informe o nome do cliente!'); return; }
+        if (!form.phone.trim())         { alert('❌ Informe o telefone!'); return; }
+        if (!form.address.trim())       { alert('❌ Informe o endereço!'); return; }
+        if (cart.length === 0)          { alert('❌ Adicione pelo menos 1 item!'); return; }
+        if (form.payment==='dinheiro' && !form.troco && form.troco !== '0') {
+            const ok = confirm('O cliente não precisa de troco? Confirmar?');
+            if (!ok) return;
+        }
+        
+        const delivery = {
+            id: Date.now(),
+            customerName: form.customerName.trim(),
+            phone: form.phone.trim(),
+            address: form.address.trim(),
+            payment: form.payment,
+            troco: form.payment==='dinheiro' ? (parseFloat(form.troco)||0) : null,
+            items: cart,
+            subtotal,
+            deliveryFee,
+            total,
+            status: 'pendente',
+            createdAt: Date.now()
+        };
+        
+        db.ref(`deliveries/${delivery.id}`).set(delivery);
+        playSound();
+        alert(`✅ Pedido de ${form.customerName} criado!\nTotal: ${config.currency} ${total.toFixed(2)}`);
+        onClose();
+    };
+    
+    return (
+        <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.92)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'1rem'}}>
+            <div onClick={e=>e.stopPropagation()} style={{
+                background:'var(--surface)',
+                borderRadius:'20px',
+                maxWidth:'700px',width:'100%',
+                border:'3px solid #e67e22',
+                maxHeight:'92vh',overflowY:'auto'
+            }}>
+                {/* Header modal */}
+                <div style={{padding:'2rem 2rem 1rem',borderBottom:'2px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',position:'sticky',top:0,background:'var(--surface)',zIndex:1}}>
+                    <h3 style={{color:'#e67e22',fontSize:'1.6rem',fontWeight:'900',margin:0}}>🛵 Novo Pedido Delivery</h3>
+                    <button onClick={onClose} style={{background:'transparent',border:'none',fontSize:'1.8rem',cursor:'pointer',color:'var(--text-secondary)'}}>×</button>
+                </div>
+                
+                {/* Steps */}
+                <div style={{display:'flex',padding:'1.2rem 2rem',gap:'0.5rem'}}>
+                    {[{n:1,label:'📋 Dados'},{n:2,label:'🛒 Itens'}].map(s=>(
+                        <button key={s.n} onClick={() => step > s.n ? setStep(s.n) : null} style={{
+                            flex:1,padding:'0.8rem',
+                            background: step===s.n ? '#e67e22' : step>s.n ? '#4a9d4e' : 'var(--background)',
+                            border:`2px solid ${step>=s.n ? (step===s.n?'#e67e22':'#4a9d4e') : 'var(--border)'}`,
+                            borderRadius:'10px',
+                            color: step>=s.n ? '#fff' : 'var(--text-secondary)',
+                            fontWeight:'800',cursor: step>s.n ? 'pointer' : 'default'
+                        }}>{s.label}</button>
+                    ))}
+                </div>
+                
+                <div style={{padding:'0 2rem 2rem'}}>
+                
+                {/* STEP 1 – Dados do cliente */}
+                {step === 1 && (
+                    <div style={{display:'grid',gap:'1.2rem'}}>
+                        <div>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>👤 Nome do Cliente *</label>
+                            <input value={form.customerName} onChange={e=>setForm({...form,customerName:e.target.value})}
+                                placeholder="Ex: João Silva"
+                                style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                        </div>
+                        <div>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>📞 Telefone *</label>
+                            <input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}
+                                placeholder="(00) 90000-0000"
+                                style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                        </div>
+                        <div>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>📍 Endereço Completo *</label>
+                            <textarea value={form.address} onChange={e=>setForm({...form,address:e.target.value})}
+                                placeholder="Rua, número, bairro, referência..."
+                                rows={3}
+                                style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem',resize:'vertical'}} />
+                        </div>
+                        <div>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>🏍️ Taxa de Entrega (opcional)</label>
+                            <input type="number" min="0" step="0.50" value={form.deliveryFee} onChange={e=>setForm({...form,deliveryFee:e.target.value})}
+                                placeholder="0,00"
+                                style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                        </div>
+                        <div>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.8rem'}}>💳 Forma de Pagamento *</label>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'0.8rem'}}>
+                                {[{v:'dinheiro',l:'💵 Dinheiro'},{v:'pix',l:'💠 PIX'},{v:'cartao',l:'💳 Cartão'}].map(p=>(
+                                    <button key={p.v} onClick={()=>setForm({...form,payment:p.v})} style={{
+                                        padding:'1rem',
+                                        background: form.payment===p.v ? '#e67e22' : 'var(--background)',
+                                        border:`2px solid ${form.payment===p.v ? '#e67e22' : 'var(--border)'}`,
+                                        borderRadius:'10px',
+                                        color: form.payment===p.v ? '#fff' : 'var(--text)',
+                                        fontWeight:'800',cursor:'pointer'
+                                    }}>{p.l}</button>
+                                ))}
+                            </div>
+                        </div>
+                        {form.payment === 'dinheiro' && (
+                            <div>
+                                <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>💵 Troco para quanto? (deixe em branco se não precisar)</label>
+                                <input type="number" min="0" value={form.troco} onChange={e=>setForm({...form,troco:e.target.value})}
+                                    placeholder="Ex: 50,00"
+                                    style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                            </div>
+                        )}
+                        <button onClick={()=>setStep(2)} style={{
+                            width:'100%',padding:'1.2rem',
+                            background:'linear-gradient(135deg,#e67e22,#d35400)',
+                            border:'none',borderRadius:'12px',
+                            color:'#fff',fontWeight:'900',fontSize:'1.1rem',cursor:'pointer'
+                        }}>PRÓXIMO: ESCOLHER ITENS →</button>
+                    </div>
+                )}
+                
+                {/* STEP 2 – Itens */}
+                {step === 2 && (
+                    <div>
+                        {/* Filtro categorias */}
+                        <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap',marginBottom:'1.5rem'}}>
+                            {categories.map(c=>(
+                                <button key={c} onClick={()=>setCatFilter(c)} style={{
+                                    padding:'0.5rem 1rem',
+                                    background: catFilter===c ? '#e67e22' : 'var(--background)',
+                                    border:`2px solid ${catFilter===c ? '#e67e22':'var(--border)'}`,
+                                    borderRadius:'20px',color: catFilter===c ? '#fff':'var(--text)',
+                                    fontWeight:'700',cursor:'pointer',fontSize:'0.9rem'
+                                }}>{c}</button>
+                            ))}
+                        </div>
+                        
+                        {/* Grid produtos */}
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
+                            {filtered.map(p=>{
+                                const inCart = cart.find(i=>i.id===p.id);
+                                return (
+                                    <div key={p.id} style={{
+                                        background:'var(--background)',
+                                        borderRadius:'12px',
+                                        border:`2px solid ${inCart ? '#e67e22' : 'var(--border)'}`,
+                                        padding:'1rem',textAlign:'center',cursor:'pointer',
+                                        transition:'all 0.2s'
+                                    }} onClick={()=>addItem(p)}>
+                                        <div style={{fontSize:'2.5rem',marginBottom:'0.4rem'}}>
+                                            {p.imageType==='upload' ? <img src={p.image} style={{width:'40px',height:'40px',borderRadius:'8px',objectFit:'cover'}} /> : p.image}
+                                        </div>
+                                        <div style={{fontWeight:'800',fontSize:'0.9rem',marginBottom:'0.2rem'}}>{p.name}</div>
+                                        <div style={{color:'#e67e22',fontWeight:'900',fontSize:'0.95rem'}}>{config.currency} {p.price.toFixed(2)}</div>
+                                        {inCart && <div style={{marginTop:'0.4rem',background:'#e67e22',color:'#fff',borderRadius:'20px',padding:'0.2rem 0.6rem',fontSize:'0.8rem',fontWeight:'800'}}>× {inCart.quantity}</div>}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        
+                        {/* Carrinho resumo */}
+                        {cart.length > 0 && (
+                            <div style={{background:'var(--background)',borderRadius:'12px',padding:'1.5rem',marginBottom:'1.5rem',border:'2px solid var(--border)'}}>
+                                <h4 style={{margin:'0 0 1rem',color:'var(--text)'}}>🛒 Resumo do Pedido</h4>
+                                {cart.map(i=>(
+                                    <div key={i.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0.5rem 0',borderBottom:'1px solid var(--border)'}}>
+                                        <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                                            <button onClick={()=>removeItem(i.id)} style={{background:'#e74c3c',border:'none',color:'#fff',borderRadius:'50%',width:'22px',height:'22px',cursor:'pointer',fontWeight:'900',fontSize:'0.9rem',display:'flex',alignItems:'center',justifyContent:'center'}}>-</button>
+                                            <span>{i.quantity}x {i.name}</span>
+                                        </div>
+                                        <span style={{fontWeight:'700',color:'#e67e22'}}>{config.currency} {(i.price*i.quantity).toFixed(2)}</span>
+                                    </div>
+                                ))}
+                                <div style={{marginTop:'0.8rem',paddingTop:'0.8rem',borderTop:'2px solid var(--border)'}}>
+                                    <div style={{display:'flex',justifyContent:'space-between'}}><span>Subtotal</span><span>{config.currency} {subtotal.toFixed(2)}</span></div>
+                                    {deliveryFee>0 && <div style={{display:'flex',justifyContent:'space-between',color:'var(--text-secondary)'}}><span>Taxa entrega</span><span>{config.currency} {deliveryFee.toFixed(2)}</span></div>}
+                                    <div style={{display:'flex',justifyContent:'space-between',fontSize:'1.3rem',fontWeight:'900',color:'#e67e22',marginTop:'0.5rem'}}>
+                                        <span>TOTAL</span><span>{config.currency} {total.toFixed(2)}</span>
+                                    </div>
+                                    {form.payment==='dinheiro' && form.troco > 0 && (
+                                        <div style={{marginTop:'0.5rem',padding:'0.5rem',background:'rgba(74,157,78,0.1)',borderRadius:'8px',color:'#4a9d4e',fontWeight:'700',fontSize:'0.9rem'}}>
+                                            💵 Troco: {config.currency} {(parseFloat(form.troco)-total).toFixed(2)}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        
+                        <div style={{display:'flex',gap:'1rem'}}>
+                            <button onClick={()=>setStep(1)} style={{padding:'1.2rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'12px',color:'var(--text)',fontWeight:'800',cursor:'pointer'}}>← VOLTAR</button>
+                            <button onClick={save} style={{
+                                flex:1,padding:'1.2rem',
+                                background:'linear-gradient(135deg,#4a9d4e,#45a049)',
+                                border:'none',borderRadius:'12px',
+                                color:'#fff',fontWeight:'900',fontSize:'1.1rem',cursor:'pointer'
+                            }}>✅ CONFIRMAR PEDIDO</button>
+                        </div>
+                    </div>
+                )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── FIM DELIVERY ─────────────────────────────────────────────
+
+function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
     const [cart, setCart] = useState([]);
     const [orderingFor, setOrderingFor] = useState(null);
     const [showChat, setShowChat] = useState(false);
@@ -3482,13 +4108,16 @@ function Waiter({tables, products, config, user, setView}) {
                         </h1>
                         <p style={{color:'var(--text-secondary)',fontSize:'0.9rem',margin:0,fontWeight:'500'}}>Garçom</p>
                     </div>
-                    <button 
-                        onClick={() => setView('login')} 
-                        className="btn btn-primary"
-                        style={{padding:'0.8rem 1.8rem'}}
-                    >
-                        SAIR
-                    </button>
+                    <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                        <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                        <button 
+                            onClick={() => setView('login')} 
+                            className="btn btn-primary"
+                            style={{padding:'0.8rem 1.8rem'}}
+                        >
+                            SAIR
+                        </button>
+                    </div>
                 </div>
             </header>
             
@@ -3815,7 +4444,7 @@ function Waiter({tables, products, config, user, setView}) {
     );
 }
 
-function Customer({tables, products, config, waiters, setView}) {
+function Customer({tables, products, config, waiters, setView, theme, toggleTheme}) {
     const tableId = parseInt(sessionStorage.getItem('tableId'));
     const [table, setTable] = useState(null);
     const [cart, setCart] = useState([]);
@@ -3922,8 +4551,13 @@ function Customer({tables, products, config, waiters, setView}) {
     }, {});
     
     return (
-        <div style={{minHeight:'100vh',background:'#fff',color:'#000'}}>
-            <header style={{background:'#1a1a1a',padding:'1.5rem',textAlign:'center',color:'#fff'}}>
+        <div style={{minHeight:'100vh',background:'var(--background)',color:'var(--text)'}}>
+            <header style={{background:'var(--surface)',padding:'1.5rem',textAlign:'center',color:'var(--text)',position:'relative'}}>
+                {/* Botão de Tema */}
+                <div style={{position:'absolute',top:'1rem',right:'1rem',zIndex:10}}>
+                    <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                </div>
+                
                 {config.logo && (
                     <div style={{marginBottom:'1rem'}}>
                         <img src={config.logo} alt={config.barName} style={{maxWidth:'300px',height:'200px'}} />
