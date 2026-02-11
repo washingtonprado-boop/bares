@@ -601,6 +601,371 @@ function ThemeToggle({theme, toggleTheme, style = {}}) {
     );
 }
 
+// ─── Delivery Público (acesso via link, sem login) ───────────
+function DeliveryPublico({config, theme, toggleTheme}) {
+    const [products, setProducts]   = useState([]);
+    const [cart, setCart]           = useState([]);
+    const [step, setStep]           = useState(1); // 1=cardápio, 2=dados, 3=confirmado
+    const [catFilter, setCatFilter] = useState('Todos');
+    const [pedidoId, setPedidoId]   = useState(null);
+    const [pedidoStatus, setPedidoStatus] = useState(null);
+    const [form, setForm] = useState({
+        nome:'', telefone:'', endereco:'', pagamento:'dinheiro', troco:'', taxa:''
+    });
+
+    useEffect(() => {
+        db.ref('products').on('value', s => {
+            if (s.val()) setProducts(Object.values(s.val()).filter(p => p.active));
+        });
+        return () => db.ref('products').off();
+    }, []);
+
+    // Rastrear pedido em tempo real
+    useEffect(() => {
+        if (!pedidoId) return;
+        const ref = db.ref(`deliveries/${pedidoId}/status`);
+        ref.on('value', s => { if (s.val()) setPedidoStatus(s.val()); });
+        return () => ref.off();
+    }, [pedidoId]);
+
+    const categories = ['Todos', ...new Set(products.map(p => p.category))];
+    const filtered   = products.filter(p => catFilter === 'Todos' || p.category === catFilter);
+
+    const addItem = (p) => {
+        const ex = cart.find(i => i.id === p.id);
+        if (ex) setCart(cart.map(i => i.id === p.id ? {...i, qty: i.qty + 1} : i));
+        else    setCart([...cart, {...p, qty: 1}]);
+    };
+    const removeItem = (id) => setCart(cart.map(i => i.id === id ? {...i, qty: i.qty - 1} : i).filter(i => i.qty > 0));
+    const getQty = (id) => cart.find(i => i.id === id)?.qty || 0;
+
+    const subtotal   = cart.reduce((s,i) => s + i.price * i.qty, 0);
+    const taxaVal    = parseFloat(form.taxa) || 0;
+    const total      = subtotal + taxaVal;
+    const trocoVal   = parseFloat(form.troco) || 0;
+
+    const confirmar = () => {
+        if (!form.nome.trim())     { alert('❌ Informe seu nome!'); return; }
+        if (!form.telefone.trim()) { alert('❌ Informe seu telefone!'); return; }
+        if (!form.endereco.trim()) { alert('❌ Informe seu endereço!'); return; }
+        if (cart.length === 0)     { alert('❌ Adicione pelo menos 1 item!'); return; }
+
+        const id = Date.now();
+        const delivery = {
+            id,
+            customerName: form.nome.trim(),
+            phone: form.telefone.trim(),
+            address: form.endereco.trim(),
+            payment: form.pagamento,
+            troco: form.pagamento === 'dinheiro' ? trocoVal : null,
+            items: cart.map(i => ({id:i.id, name:i.name, image:i.image, price:i.price, quantity:i.qty})),
+            subtotal,
+            deliveryFee: taxaVal,
+            total,
+            status: 'pendente',
+            origem: 'online',
+            createdAt: Date.now()
+        };
+
+        db.ref(`deliveries/${id}`).set(delivery).then(() => {
+            setPedidoId(id);
+            setStep(3);
+        });
+    };
+
+    const statusInfo = {
+        pendente:   {icon:'⏳', label:'Recebido! Aguardando confirmação', color:'#f39c12', prog:20},
+        preparando: {icon:'👨‍🍳', label:'Seu pedido está sendo preparado', color:'#e67e22', prog:50},
+        saiu:       {icon:'🛵', label:'Saiu para entrega! A caminho...', color:'#3498db', prog:80},
+        entregue:   {icon:'✅', label:'Pedido entregue! Bom apetite!', color:'#4a9d4e', prog:100},
+        cancelado:  {icon:'❌', label:'Pedido cancelado. Entre em contato.', color:'#e74c3c', prog:0},
+    };
+
+    // ─── STEP 3: Rastreamento ───
+    if (step === 3) {
+        const info = statusInfo[pedidoStatus] || statusInfo['pendente'];
+        return (
+            <div style={{minHeight:'100vh',background:'var(--background)',color:'var(--text)',display:'flex',alignItems:'center',justifyContent:'center',padding:'1.5rem'}}>
+                <div style={{maxWidth:'480px',width:'100%',textAlign:'center'}}>
+                    <div style={{background:'var(--surface)',borderRadius:'24px',padding:'3rem 2rem',border:`3px solid ${info.color}`,boxShadow:`0 8px 40px ${info.color}33`}}>
+                        <div style={{fontSize:'5rem',marginBottom:'1rem'}}>{info.icon}</div>
+                        <h2 style={{fontSize:'1.6rem',fontWeight:'900',color:info.color,marginBottom:'0.5rem'}}>{info.label}</h2>
+                        <p style={{color:'var(--text-secondary)',marginBottom:'2rem'}}>Pedido #{String(pedidoId).slice(-5)}</p>
+
+                        {/* Barra de progresso */}
+                        <div style={{background:'var(--background)',borderRadius:'20px',height:'12px',marginBottom:'2rem',overflow:'hidden'}}>
+                            <div style={{
+                                height:'100%',borderRadius:'20px',
+                                background:`linear-gradient(90deg, ${info.color}, ${info.color}cc)`,
+                                width:`${info.prog}%`,
+                                transition:'width 0.8s ease'
+                            }} />
+                        </div>
+
+                        {/* Steps visuais */}
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:'2rem'}}>
+                            {[
+                                {s:'pendente',   i:'⏳', l:'Recebido'},
+                                {s:'preparando', i:'👨‍🍳', l:'Preparando'},
+                                {s:'saiu',       i:'🛵', l:'Saindo'},
+                                {s:'entregue',   i:'✅', l:'Entregue'},
+                            ].map((st, idx) => {
+                                const steps = ['pendente','preparando','saiu','entregue'];
+                                const curIdx = steps.indexOf(pedidoStatus);
+                                const done   = idx <= curIdx;
+                                return (
+                                    <div key={st.s} style={{textAlign:'center',flex:1}}>
+                                        <div style={{
+                                            width:'40px',height:'40px',borderRadius:'50%',
+                                            margin:'0 auto 0.4rem',
+                                            background: done ? info.color : 'var(--background)',
+                                            border:`3px solid ${done ? info.color : 'var(--border)'}`,
+                                            display:'flex',alignItems:'center',justifyContent:'center',
+                                            fontSize:'1.2rem',transition:'all 0.5s'
+                                        }}>{st.i}</div>
+                                        <div style={{fontSize:'0.7rem',color: done ? info.color : 'var(--text-secondary)',fontWeight:'700'}}>{st.l}</div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Resumo do pedido */}
+                        <div style={{background:'var(--background)',borderRadius:'12px',padding:'1.2rem',marginBottom:'1.5rem',textAlign:'left'}}>
+                            <div style={{fontWeight:'800',marginBottom:'0.8rem'}}>🛒 Seu Pedido:</div>
+                            {cart.map((i,idx) => (
+                                <div key={idx} style={{display:'flex',justifyContent:'space-between',fontSize:'0.9rem',padding:'0.3rem 0'}}>
+                                    <span>{i.qty}x {i.name}</span>
+                                    <span style={{color:'#d4a574',fontWeight:'700'}}>{config.currency} {(i.price*i.qty).toFixed(2)}</span>
+                                </div>
+                            ))}
+                            <div style={{borderTop:'1px solid var(--border)',marginTop:'0.8rem',paddingTop:'0.8rem',display:'flex',justifyContent:'space-between',fontWeight:'900',color:'#d4a574'}}>
+                                <span>TOTAL</span><span>{config.currency} {total.toFixed(2)}</span>
+                            </div>
+                        </div>
+
+                        <p style={{color:'var(--text-secondary)',fontSize:'0.85rem'}}>
+                            📞 {form.telefone} · 📍 {form.endereco}
+                        </p>
+                        {pedidoStatus !== 'entregue' && pedidoStatus !== 'cancelado' && (
+                            <p style={{color:'var(--text-secondary)',fontSize:'0.8rem',marginTop:'0.5rem'}}>
+                                🔄 Atualizando automaticamente...
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ─── STEP 2: Dados do cliente ───
+    if (step === 2) {
+        return (
+            <div style={{minHeight:'100vh',background:'var(--background)',color:'var(--text)'}}>
+                {/* Header */}
+                <div style={{background:'var(--surface)',padding:'1.2rem 1.5rem',borderBottom:'3px solid #e67e22',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                        <button onClick={()=>setStep(1)} style={{background:'transparent',border:'none',fontSize:'1.5rem',cursor:'pointer',color:'var(--text)'}}>←</button>
+                        <div>
+                            {config.logo && <img src={config.logo} alt="" style={{height:'35px',marginRight:'0.5rem',verticalAlign:'middle'}} />}
+                            <strong style={{color:'#e67e22'}}>{config.barName}</strong>
+                        </div>
+                    </div>
+                    <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                </div>
+
+                <div style={{maxWidth:'520px',margin:'0 auto',padding:'1.5rem'}}>
+                    {/* Resumo do carrinho */}
+                    <div style={{background:'var(--surface)',borderRadius:'16px',padding:'1.5rem',marginBottom:'2rem',border:'2px solid var(--border)'}}>
+                        <h3 style={{margin:'0 0 1rem',fontWeight:'800'}}>🛒 Seu Pedido ({cart.length} {cart.length===1?'item':'itens'})</h3>
+                        {cart.map(i=>(
+                            <div key={i.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0.5rem 0',borderBottom:'1px solid var(--border)'}}>
+                                <div style={{display:'flex',alignItems:'center',gap:'0.7rem'}}>
+                                    <div style={{display:'flex',gap:'0.3rem'}}>
+                                        <button onClick={()=>removeItem(i.id)} style={{width:'26px',height:'26px',borderRadius:'50%',background:'#e74c3c',border:'none',color:'#fff',fontWeight:'900',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
+                                        <span style={{minWidth:'20px',textAlign:'center',fontWeight:'800'}}>{i.qty}</span>
+                                        <button onClick={()=>addItem(i)} style={{width:'26px',height:'26px',borderRadius:'50%',background:'#4a9d4e',border:'none',color:'#fff',fontWeight:'900',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
+                                    </div>
+                                    <span>{i.name}</span>
+                                </div>
+                                <span style={{fontWeight:'700',color:'#e67e22'}}>{config.currency} {(i.price*i.qty).toFixed(2)}</span>
+                            </div>
+                        ))}
+                        <div style={{marginTop:'1rem',paddingTop:'1rem',borderTop:'2px solid var(--border)',display:'flex',justifyContent:'space-between',fontWeight:'900',fontSize:'1.2rem',color:'#e67e22'}}>
+                            <span>TOTAL</span>
+                            <span>{config.currency} {total.toFixed(2)}</span>
+                        </div>
+                    </div>
+
+                    {/* Formulário */}
+                    <div style={{display:'grid',gap:'1.2rem'}}>
+                        <h3 style={{margin:0,fontWeight:'800'}}>📋 Seus Dados</h3>
+                        {[
+                            {key:'nome',      label:'👤 Seu nome *',     type:'text',  ph:'Ex: João Silva'},
+                            {key:'telefone',  label:'📞 Telefone *',     type:'tel',   ph:'(00) 90000-0000'},
+                            {key:'endereco',  label:'📍 Endereço completo *', type:'text', ph:'Rua, número, bairro, referência...'},
+                        ].map(f=>(
+                            <div key={f.key}>
+                                <label style={{display:'block',fontWeight:'700',color:'var(--text-secondary)',marginBottom:'0.4rem'}}>{f.label}</label>
+                                <input type={f.type} value={form[f.key]} placeholder={f.ph}
+                                    onChange={e=>setForm({...form,[f.key]:e.target.value})}
+                                    style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                            </div>
+                        ))}
+
+                        {/* Pagamento */}
+                        <div>
+                            <label style={{display:'block',fontWeight:'700',color:'var(--text-secondary)',marginBottom:'0.8rem'}}>💳 Pagamento *</label>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'0.8rem'}}>
+                                {[{v:'dinheiro',l:'💵',n:'Dinheiro'},{v:'pix',l:'💠',n:'PIX'},{v:'cartao',l:'💳',n:'Cartão'}].map(p=>(
+                                    <button key={p.v} onClick={()=>setForm({...form,pagamento:p.v})} style={{
+                                        padding:'1rem 0.5rem',textAlign:'center',
+                                        background: form.pagamento===p.v ? '#e67e22' : 'var(--background)',
+                                        border:`2px solid ${form.pagamento===p.v ? '#e67e22' : 'var(--border)'}`,
+                                        borderRadius:'12px',cursor:'pointer',
+                                        color: form.pagamento===p.v ? '#fff' : 'var(--text)',
+                                        fontWeight:'800',transition:'all 0.2s'
+                                    }}>
+                                        <div style={{fontSize:'1.5rem'}}>{p.l}</div>
+                                        <div style={{fontSize:'0.8rem'}}>{p.n}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Troco */}
+                        {form.pagamento === 'dinheiro' && (
+                            <div>
+                                <label style={{display:'block',fontWeight:'700',color:'var(--text-secondary)',marginBottom:'0.4rem'}}>💵 Troco para quanto? (opcional)</label>
+                                <input type="number" min="0" value={form.troco} placeholder={`Ex: ${Math.ceil(total/10)*10}`}
+                                    onChange={e=>setForm({...form,troco:e.target.value})}
+                                    style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                                {trocoVal > 0 && trocoVal > total && (
+                                    <div style={{marginTop:'0.5rem',padding:'0.6rem 1rem',background:'rgba(74,157,78,0.15)',borderRadius:'8px',color:'#4a9d4e',fontWeight:'700',fontSize:'0.9rem'}}>
+                                        ✅ Troco: {config.currency} {(trocoVal - total).toFixed(2)}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <button onClick={confirmar} style={{
+                            width:'100%',padding:'1.3rem',marginTop:'0.5rem',
+                            background:'linear-gradient(135deg,#4a9d4e,#45a049)',
+                            border:'none',borderRadius:'14px',
+                            color:'#fff',fontWeight:'900',fontSize:'1.1rem',cursor:'pointer',
+                            boxShadow:'0 6px 20px rgba(74,157,78,0.4)'
+                        }}>✅ FAZER PEDIDO · {config.currency} {total.toFixed(2)}</button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ─── STEP 1: Cardápio ───
+    return (
+        <div style={{minHeight:'100vh',background:'var(--background)',color:'var(--text)'}}>
+            {/* Header */}
+            <div style={{background:'var(--surface)',borderBottom:'3px solid #e67e22',position:'sticky',top:0,zIndex:100}}>
+                <div style={{padding:'1.2rem 1.5rem',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'0.8rem'}}>
+                        {config.logo && <img src={config.logo} alt="" style={{height:'40px',borderRadius:'8px'}} />}
+                        <div>
+                            <div style={{fontWeight:'900',color:'#e67e22',fontSize:'1.1rem'}}>{config.barName}</div>
+                            <div style={{color:'var(--text-secondary)',fontSize:'0.8rem'}}>🛵 Delivery</div>
+                        </div>
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:'0.8rem'}}>
+                        <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                        {cart.length > 0 && (
+                            <button onClick={()=>setStep(2)} style={{
+                                padding:'0.7rem 1.2rem',
+                                background:'linear-gradient(135deg,#e67e22,#d35400)',
+                                border:'none',borderRadius:'20px',color:'#fff',
+                                fontWeight:'800',cursor:'pointer',fontSize:'0.9rem',
+                                display:'flex',alignItems:'center',gap:'0.5rem'
+                            }}>
+                                🛒 {cart.reduce((s,i)=>s+i.qty,0)} · {config.currency} {subtotal.toFixed(2)}
+                            </button>
+                        )}
+                    </div>
+                </div>
+                {/* Filtro categorias */}
+                <div style={{padding:'0 1rem 1rem',display:'flex',gap:'0.5rem',overflowX:'auto'}}>
+                    {categories.map(c=>(
+                        <button key={c} onClick={()=>setCatFilter(c)} style={{
+                            padding:'0.4rem 1rem',
+                            background: catFilter===c ? '#e67e22' : 'transparent',
+                            border:`2px solid ${catFilter===c ? '#e67e22' : 'var(--border)'}`,
+                            borderRadius:'20px',color: catFilter===c ? '#fff' : 'var(--text-secondary)',
+                            fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap',fontSize:'0.85rem'
+                        }}>{c}</button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Grid produtos */}
+            <div style={{padding:'1.5rem',maxWidth:'900px',margin:'0 auto'}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(155px,1fr))',gap:'1rem'}}>
+                    {filtered.map(p=>{
+                        const qty = getQty(p.id);
+                        return (
+                            <div key={p.id} style={{
+                                background:'var(--surface)',borderRadius:'16px',
+                                border:`2px solid ${qty>0 ? '#e67e22' : 'var(--border)'}`,
+                                overflow:'hidden',transition:'all 0.2s',
+                                boxShadow: qty>0 ? '0 4px 20px rgba(230,126,34,0.3)' : 'none'
+                            }}>
+                                <div style={{padding:'1rem',textAlign:'center'}}>
+                                    <div style={{fontSize:'3rem',marginBottom:'0.5rem'}}>
+                                        {p.imageType==='upload'
+                                            ? <img src={p.image} style={{width:'60px',height:'60px',borderRadius:'10px',objectFit:'cover'}} />
+                                            : p.image}
+                                    </div>
+                                    <div style={{fontWeight:'800',fontSize:'0.95rem',marginBottom:'0.3rem'}}>{p.name}</div>
+                                    <div style={{color:'#e67e22',fontWeight:'900',marginBottom:'0.8rem'}}>{config.currency} {p.price.toFixed(2)}</div>
+                                    {qty === 0 ? (
+                                        <button onClick={()=>addItem(p)} style={{
+                                            width:'100%',padding:'0.6rem',
+                                            background:'linear-gradient(135deg,#e67e22,#d35400)',
+                                            border:'none',borderRadius:'10px',
+                                            color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.9rem'
+                                        }}>+ Adicionar</button>
+                                    ) : (
+                                        <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem'}}>
+                                            <button onClick={()=>removeItem(p.id)} style={{width:'32px',height:'32px',borderRadius:'50%',background:'#e74c3c',border:'none',color:'#fff',fontWeight:'900',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'1.1rem'}}>−</button>
+                                            <span style={{fontWeight:'900',fontSize:'1.1rem',minWidth:'24px',textAlign:'center',color:'#e67e22'}}>{qty}</span>
+                                            <button onClick={()=>addItem(p)} style={{width:'32px',height:'32px',borderRadius:'50%',background:'#4a9d4e',border:'none',color:'#fff',fontWeight:'900',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'1.1rem'}}>+</button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* Botão flutuante do carrinho */}
+            {cart.length > 0 && (
+                <div style={{position:'fixed',bottom:'1.5rem',left:'50%',transform:'translateX(-50%)',zIndex:200,width:'calc(100% - 3rem)',maxWidth:'400px'}}>
+                    <button onClick={()=>setStep(2)} style={{
+                        width:'100%',padding:'1.2rem',
+                        background:'linear-gradient(135deg,#e67e22,#d35400)',
+                        border:'none',borderRadius:'16px',color:'#fff',
+                        fontWeight:'900',fontSize:'1.1rem',cursor:'pointer',
+                        boxShadow:'0 8px 30px rgba(230,126,34,0.6)',
+                        display:'flex',justifyContent:'space-between',alignItems:'center'
+                    }}>
+                        <span style={{background:'rgba(0,0,0,0.2)',borderRadius:'20px',padding:'0.3rem 0.8rem',fontSize:'0.9rem'}}>
+                            {cart.reduce((s,i)=>s+i.qty,0)} {cart.reduce((s,i)=>s+i.qty,0)===1?'item':'itens'}
+                        </span>
+                        <span>Ver Pedido</span>
+                        <span style={{fontWeight:'900'}}>{config.currency} {subtotal.toFixed(2)}</span>
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ─── Cardápio Público (acesso via QR, sem login) ──────────────
 function CardapioPublico({config, tables, setUser, setView, theme, toggleTheme}) {
     const [products, setProducts] = useState([]);
@@ -681,16 +1046,24 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
     const [nome, setNome] = useState('');
     const [ask, setAsk] = useState(false);
     const [cardapioPublico, setCardapioPublico] = useState(false);
+    const [deliveryPublico, setDeliveryPublico] = useState(false);
     
-    // Detectar acesso via QR Code
+    // Detectar acesso via QR Code ou link
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
-        const mesaParam = urlParams.get('mesa');
+        const mesaParam    = urlParams.get('mesa');
         const cardapioParam = urlParams.get('cardapio');
+        const deliveryParam = urlParams.get('delivery');
         
         // Cardápio público via QR
         if (cardapioParam === '1') {
             setCardapioPublico(true);
+            return;
+        }
+        
+        // Delivery público via link
+        if (deliveryParam === '1') {
+            setDeliveryPublico(true);
             return;
         }
         
@@ -756,6 +1129,11 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
     // Cardápio público (acesso via QR sem login)
     if (cardapioPublico) {
         return <CardapioPublico config={config} tables={tables} setUser={setUser} setView={setView} theme={theme} toggleTheme={toggleTheme} />;
+    }
+    
+    // Delivery público (acesso via link sem login)
+    if (deliveryPublico) {
+        return <DeliveryPublico config={config} theme={theme} toggleTheme={toggleTheme} />;
     }
     
     return (
@@ -4335,13 +4713,22 @@ function CardapioQRTab({products, config}) {
 
     // URL do cardápio público
     const cardapioUrl = `${window.location.href.split('?')[0]}?cardapio=1`;
+    const deliveryUrl = `${window.location.href.split('?')[0]}?delivery=1`;
+    const qrDeliveryRef = useRef(null);
+    const [qrDeliveryGenerated, setQrDeliveryGenerated] = useState(false);
 
     useEffect(() => {
         if (qrRef.current && window.QRCode && !qrGenerated) {
             window.QRCode.toCanvas(qrRef.current, cardapioUrl, {
-                width: 250, margin: 2,
+                width: 220, margin: 2,
                 color: {dark:'#000000', light:'#ffffff'}
             }, err => { if (!err) setQrGenerated(true); });
+        }
+        if (qrDeliveryRef.current && window.QRCode && !qrDeliveryGenerated) {
+            window.QRCode.toCanvas(qrDeliveryRef.current, deliveryUrl, {
+                width: 220, margin: 2,
+                color: {dark:'#000000', light:'#ffffff'}
+            }, err => { if (!err) setQrDeliveryGenerated(true); });
         }
     }, []);
 
@@ -4388,31 +4775,53 @@ function CardapioQRTab({products, config}) {
         <div>
             <h2 style={{fontSize:'2rem',fontWeight:'900',color:'#4a9d4e',marginBottom:'2rem'}}>📋 Cardápio Online & QR Code</h2>
 
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'2rem',marginBottom:'2rem'}}>
-                {/* QR Code */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:'2rem',marginBottom:'2rem'}}>
+                {/* QR Cardápio */}
                 <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid #4a9d4e',textAlign:'center'}}>
-                    <h3 style={{color:'#4a9d4e',marginBottom:'1.5rem',fontWeight:'800'}}>📱 QR Code do Cardápio</h3>
-                    <div style={{background:'#fff',padding:'1rem',borderRadius:'12px',display:'inline-block',marginBottom:'1.5rem'}}>
+                    <h3 style={{color:'#4a9d4e',marginBottom:'1.5rem',fontWeight:'800'}}>📱 QR Cardápio</h3>
+                    <div style={{background:'#fff',padding:'1rem',borderRadius:'12px',display:'inline-block',marginBottom:'1rem'}}>
                         <canvas ref={qrRef} />
                     </div>
-                    <p style={{color:'var(--text-secondary)',fontSize:'0.85rem',marginBottom:'1rem'}}>
-                        Clientes escaneiam e veem o cardápio completo
+                    <p style={{color:'var(--text-secondary)',fontSize:'0.82rem',marginBottom:'1rem'}}>
+                        Cliente escaneia → vê cardápio sem login
                     </p>
-                    <div style={{display:'grid',gap:'0.8rem'}}>
+                    <div style={{display:'grid',gap:'0.7rem'}}>
                         <button onClick={() => {navigator.clipboard.writeText(cardapioUrl); alert('✅ Link copiado!');}}
-                            style={{padding:'0.9rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
+                            style={{padding:'0.8rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
                             📋 COPIAR LINK
                         </button>
                         <button onClick={printCardapio}
-                            style={{padding:'0.9rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
+                            style={{padding:'0.8rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
                             🖨️ IMPRIMIR CARDÁPIO
                         </button>
                     </div>
                 </div>
 
-                {/* Preview */}
-                <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid var(--border)'}}>
-                    <h3 style={{color:'var(--text)',marginBottom:'1.5rem',fontWeight:'800'}}>👁️ Prévia do Cardápio</h3>
+                {/* QR Delivery */}
+                <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid #e67e22',textAlign:'center'}}>
+                    <h3 style={{color:'#e67e22',marginBottom:'1.5rem',fontWeight:'800'}}>🛵 QR Delivery</h3>
+                    <div style={{background:'#fff',padding:'1rem',borderRadius:'12px',display:'inline-block',marginBottom:'1rem'}}>
+                        <canvas ref={qrDeliveryRef} />
+                    </div>
+                    <p style={{color:'var(--text-secondary)',fontSize:'0.82rem',marginBottom:'1rem'}}>
+                        Cliente escaneia → faz pedido delivery online
+                    </p>
+                    <div style={{display:'grid',gap:'0.7rem'}}>
+                        <button onClick={() => {navigator.clipboard.writeText(deliveryUrl); alert('✅ Link copiado!');}}
+                            style={{padding:'0.8rem',background:'#e67e22',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
+                            📋 COPIAR LINK
+                        </button>
+                        <button onClick={() => window.open(deliveryUrl,'_blank')}
+                            style={{padding:'0.8rem',background:'transparent',border:'2px solid #e67e22',borderRadius:'10px',color:'#e67e22',fontWeight:'800',cursor:'pointer'}}>
+                            👁️ VER COMO CLIENTE
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Preview do cardápio */}
+            <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid var(--border)',marginBottom:'2rem'}}>
+                <h3 style={{color:'var(--text)',marginBottom:'1.5rem',fontWeight:'800'}}>👁️ Prévia do Cardápio</h3>
                     <div style={{maxHeight:'400px',overflowY:'auto'}}>
                         {Object.entries(grouped).map(([cat, items])=>(
                             <div key={cat} style={{marginBottom:'1.5rem'}}>
@@ -4432,7 +4841,6 @@ function CardapioQRTab({products, config}) {
                         ))}
                     </div>
                 </div>
-            </div>
 
             {/* Instruções */}
             <div style={{background:'var(--surface)',borderRadius:'12px',padding:'1.5rem',border:'2px solid var(--border)'}}>
