@@ -315,18 +315,59 @@ setTimeout(() => {
     }
 }, 1000);
 
-const playSound = () => {
+// Sons diferenciados por tipo de evento
+const playSound = (type = 'default') => {
     try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.connect(gain);
         gain.connect(ctx.destination);
-        osc.frequency.value = 800;
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.5);
+
+        const sounds = {
+            // 🔔 Novo pedido - dois bipes agudos
+            pedido: [
+                {freq:880, start:0,    dur:0.12, vol:0.3},
+                {freq:1100,start:0.18, dur:0.12, vol:0.3},
+            ],
+            // 📞 Chamada de garçom - três bipes médios
+            chamada: [
+                {freq:660, start:0,    dur:0.1,  vol:0.35},
+                {freq:660, start:0.15, dur:0.1,  vol:0.35},
+                {freq:880, start:0.30, dur:0.18, vol:0.4},
+            ],
+            // 🛵 Delivery chegou - bipe grave longo
+            delivery: [
+                {freq:440, start:0,    dur:0.2,  vol:0.35},
+                {freq:550, start:0.25, dur:0.2,  vol:0.35},
+                {freq:660, start:0.50, dur:0.3,  vol:0.4},
+            ],
+            // 📅 Reserva - som suave duplo
+            reserva: [
+                {freq:523, start:0,    dur:0.15, vol:0.25},
+                {freq:659, start:0.2,  dur:0.15, vol:0.25},
+            ],
+            // ✅ Conta fechada - som de sucesso
+            fechamento: [
+                {freq:523, start:0,    dur:0.1,  vol:0.25},
+                {freq:659, start:0.12, dur:0.1,  vol:0.25},
+                {freq:784, start:0.24, dur:0.2,  vol:0.3},
+            ],
+            // default - bipe simples
+            default: [
+                {freq:800, start:0,    dur:0.5,  vol:0.3},
+            ],
+        };
+
+        const seq = sounds[type] || sounds.default;
+        seq.forEach(({freq, start, dur, vol}) => {
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.connect(g); g.connect(ctx.destination);
+            osc.frequency.value = freq;
+            g.gain.setValueAtTime(vol, ctx.currentTime + start);
+            g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+            osc.start(ctx.currentTime + start);
+            osc.stop(ctx.currentTime + start + dur + 0.05);
+        });
     } catch(e) {}
 };
 
@@ -442,12 +483,17 @@ function App() {
                 if (prevTables.current.length > 0) {
                     newT.forEach(nt => {
                         const ot = prevTables.current.find(t => t.id === nt.id);
+                        // Novo pedido pendente
                         if (ot && nt.pending && ot.pending && nt.pending.length > ot.pending.length) {
-                            playSound();
+                            playSound('pedido');
                         }
-                        // Detectar chamada de garçom
+                        // Chamada de garçom
                         if (ot && nt.callWaiter && !ot.callWaiter) {
-                            playSound();
+                            playSound('chamada');
+                        }
+                        // Conta fechada (status livre quando era ocupada)
+                        if (ot && ot.status === 'ocupada' && nt.status === 'livre') {
+                            playSound('fechamento');
                         }
                     });
                 }
@@ -477,6 +523,35 @@ function App() {
         setTimeout(() => setLoading(false), 800);
     }, []);
     
+    const prevDeliveries = useRef([]);
+    const prevReservas = useRef([]);
+    
+    useEffect(() => {
+        // Som de novo delivery
+        const refD = db.ref('deliveries');
+        refD.on('value', s => {
+            if (s.val()) {
+                const list = Object.values(s.val());
+                if (prevDeliveries.current.length > 0 && list.length > prevDeliveries.current.length) {
+                    playSound('delivery');
+                }
+                prevDeliveries.current = list;
+            }
+        });
+        // Som de nova reserva
+        const refR = db.ref('reservas');
+        refR.on('value', s => {
+            if (s.val()) {
+                const list = Object.values(s.val());
+                if (prevReservas.current.length > 0 && list.length > prevReservas.current.length) {
+                    playSound('reserva');
+                }
+                prevReservas.current = list;
+            }
+        });
+        return () => { refD.off(); refR.off(); };
+    }, []);
+
     if (loading) return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}><h2 style={{color:'#d4a574'}}>Carregando...</h2></div>;
     
     const props = {config, products, waiters, tables, sales, user, setUser, setView, theme, toggleTheme};
@@ -526,17 +601,98 @@ function ThemeToggle({theme, toggleTheme, style = {}}) {
     );
 }
 
+// ─── Cardápio Público (acesso via QR, sem login) ──────────────
+function CardapioPublico({config, tables, setUser, setView, theme, toggleTheme}) {
+    const [products, setProducts] = useState([]);
+    const [catFilter, setCatFilter] = useState('Todos');
+
+    useEffect(() => {
+        db.ref('products').on('value', s => {
+            if (s.val()) setProducts(Object.values(s.val()).filter(p=>p.active));
+        });
+        return () => db.ref('products').off();
+    }, []);
+
+    const categories = ['Todos', ...new Set(products.map(p=>p.category))];
+    const filtered = products.filter(p => catFilter==='Todos' || p.category===catFilter);
+
+    return (
+        <div style={{minHeight:'100vh',background:'var(--background)',color:'var(--text)'}}>
+            {/* Header */}
+            <div style={{background:'var(--surface)',padding:'1.5rem',textAlign:'center',borderBottom:'3px solid #d4a574',position:'sticky',top:0,zIndex:100}}>
+                <div style={{position:'absolute',top:'1rem',right:'1rem'}}>
+                    <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+                </div>
+                {config.logo && <img src={config.logo} alt={config.barName} style={{maxHeight:'80px',marginBottom:'0.5rem'}} />}
+                <h1 style={{fontSize:'1.8rem',fontWeight:'900',color:'#d4a574',margin:0}}>{config.barName}</h1>
+                <p style={{color:'var(--text-secondary)',margin:'0.3rem 0 0',fontSize:'0.9rem'}}>📋 Cardápio</p>
+            </div>
+
+            {/* Filtro categorias */}
+            <div style={{padding:'1rem 1.5rem',overflowX:'auto',display:'flex',gap:'0.6rem',background:'var(--surface)',borderBottom:'1px solid var(--border)'}}>
+                {categories.map(c=>(
+                    <button key={c} onClick={()=>setCatFilter(c)} style={{
+                        padding:'0.5rem 1.2rem',
+                        background: catFilter===c ? '#d4a574' : 'var(--background)',
+                        border:`2px solid ${catFilter===c ? '#d4a574' : 'var(--border)'}`,
+                        borderRadius:'20px',
+                        color: catFilter===c ? '#000' : 'var(--text)',
+                        fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap',fontSize:'0.9rem'
+                    }}>{c}</button>
+                ))}
+            </div>
+
+            {/* Grid de produtos */}
+            <div style={{padding:'1.5rem',maxWidth:'900px',margin:'0 auto'}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:'1.2rem'}}>
+                    {filtered.map(p=>(
+                        <div key={p.id} style={{
+                            background:'var(--surface)',
+                            borderRadius:'16px',
+                            border:'2px solid var(--border)',
+                            padding:'1.2rem',
+                            textAlign:'center',
+                            boxShadow:'0 4px 12px var(--shadow)'
+                        }}>
+                            <div style={{fontSize:'3rem',marginBottom:'0.8rem'}}>
+                                {p.imageType==='upload'
+                                    ? <img src={p.image} style={{width:'60px',height:'60px',borderRadius:'10px',objectFit:'cover'}} />
+                                    : p.image}
+                            </div>
+                            <div style={{fontWeight:'800',fontSize:'1rem',marginBottom:'0.4rem'}}>{p.name}</div>
+                            <div style={{color:'#d4a574',fontWeight:'900',fontSize:'1.2rem'}}>{config.currency} {parseFloat(p.price).toFixed(2)}</div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* Rodapé */}
+            <div style={{textAlign:'center',padding:'2rem',color:'var(--text-secondary)',fontSize:'0.85rem',borderTop:'1px solid var(--border)'}}>
+                <p>Para fazer seu pedido, informe ao garçom ou use o link da sua mesa.</p>
+            </div>
+        </div>
+    );
+}
+
 function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) {
     const [mode, setMode] = useState('staff');
     const [pin, setPin] = useState('');
     const [mesa, setMesa] = useState('');
     const [nome, setNome] = useState('');
     const [ask, setAsk] = useState(false);
+    const [cardapioPublico, setCardapioPublico] = useState(false);
     
     // Detectar acesso via QR Code
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
         const mesaParam = urlParams.get('mesa');
+        const cardapioParam = urlParams.get('cardapio');
+        
+        // Cardápio público via QR
+        if (cardapioParam === '1') {
+            setCardapioPublico(true);
+            return;
+        }
         
         if (mesaParam) {
             // Cliente veio via QR Code
@@ -596,6 +752,11 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
             }
         });
     };
+    
+    // Cardápio público (acesso via QR sem login)
+    if (cardapioPublico) {
+        return <CardapioPublico config={config} tables={tables} setUser={setUser} setView={setView} theme={theme} toggleTheme={toggleTheme} />;
+    }
     
     return (
         <div className="fade-in" style={{
@@ -989,6 +1150,9 @@ function Master({config, products, waiters, tables, sales, setView, theme, toggl
                 <button onClick={() => setTab('usuarios')} style={{padding:'1.2rem 2rem',background:tab==='usuarios'?'#1a1a1a':'transparent',border:'none',color:tab==='usuarios'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>👥 USUÁRIOS</button>
                 <button onClick={() => setTab('products')} style={{padding:'1.2rem 2rem',background:tab==='products'?'#1a1a1a':'transparent',border:'none',color:tab==='products'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📦 PRODUTOS</button>
                 <button onClick={() => setTab('waiters')} style={{padding:'1.2rem 2rem',background:tab==='waiters'?'#1a1a1a':'transparent',border:'none',color:tab==='waiters'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>👨‍🍳 GARÇONS</button>
+                <button onClick={() => setTab('reservas')} style={{padding:'1.2rem 2rem',background:tab==='reservas'?'#1a1a1a':'transparent',border:'none',color:tab==='reservas'?'#3498db':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📅 RESERVAS</button>
+                <button onClick={() => setTab('cardapio')} style={{padding:'1.2rem 2rem',background:tab==='cardapio'?'#1a1a1a':'transparent',border:'none',color:tab==='cardapio'?'#4a9d4e':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📋 CARDÁPIO QR</button>
+                <button onClick={() => setTab('clientes')} style={{padding:'1.2rem 2rem',background:tab==='clientes'?'#1a1a1a':'transparent',border:'none',color:tab==='clientes'?'#9b59b6':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>🏆 CLIENTES</button>
                 <button onClick={() => setTab('relatorios')} style={{padding:'1.2rem 2rem',background:tab==='relatorios'?'#1a1a1a':'transparent',border:'none',color:tab==='relatorios'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📊 RELATÓRIOS</button>
             </nav>
             
@@ -997,6 +1161,9 @@ function Master({config, products, waiters, tables, sales, setView, theme, toggl
                 {tab === 'usuarios' && <UsersTab config={config} waiters={waiters} onAdd={() => setModal('user')} onEdit={(u) => {setEdit(u); setModal('user');}} />}
                 {tab === 'products' && <ProductsTab products={products} config={config} onAdd={() => setModal('product')} onEdit={(p) => {setEdit(p); setModal('product');}} />}
                 {tab === 'waiters' && <WaitersTab waiters={waiters} onAdd={() => setModal('waiter')} onEdit={(w) => {setEdit(w); setModal('waiter');}} />}
+                {tab === 'reservas' && <ReservasTab config={config} tables={tables} onAdd={() => setModal('reserva')} />}
+                {tab === 'cardapio' && <CardapioQRTab products={products} config={config} />}
+                {tab === 'clientes' && <ClientesTab sales={sales} config={config} />}
                 {tab === 'relatorios' && (
                     <div>
                         <h2 style={{color:'#d4a574',fontSize:'2rem',marginBottom:'2rem',fontWeight:'900'}}>📊 Relatórios Gerenciais</h2>
@@ -1139,6 +1306,7 @@ function Master({config, products, waiters, tables, sales, setView, theme, toggl
             {modal === 'product' && <ProductModal edit={edit} config={config} onClose={() => {setModal(null); setEdit(null);}} />}
             {modal === 'waiter' && <WaiterModal edit={edit} onClose={() => {setModal(null); setEdit(null);}} />}
             {modal === 'user' && <UserModal edit={edit} onClose={() => {setModal(null); setEdit(null);}} />}
+            {modal === 'reserva' && <ReservaModal tables={tables} config={config} onClose={() => setModal(null)} />}
         </div>
     );
 }
@@ -3979,6 +4147,462 @@ function DeliveryModal({products, config, onClose}) {
 }
 
 // ─── FIM DELIVERY ─────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════
+//  📅  RESERVAS
+// ═══════════════════════════════════════════════════════
+
+function ReservasTab({config, tables, onAdd}) {
+    const [reservas, setReservas] = useState([]);
+
+    useEffect(() => {
+        db.ref('reservas').on('value', s => {
+            if (s.val()) setReservas(Object.values(s.val()).sort((a,b)=>a.timestamp-b.timestamp));
+            else setReservas([]);
+        });
+        return () => db.ref('reservas').off();
+    }, []);
+
+    const statusColor = {pendente:'#f39c12', confirmada:'#4a9d4e', cancelada:'#e74c3c', concluida:'#6c757d'};
+    const statusLabel = {pendente:'⏳ Pendente', confirmada:'✅ Confirmada', cancelada:'❌ Cancelada', concluida:'🏁 Concluída'};
+
+    const setStatus = (id, status) => db.ref(`reservas/${id}/status`).set(status);
+    const del = (id) => { if(confirm('Excluir reserva?')) db.ref(`reservas/${id}`).remove(); };
+
+    const hoje = new Date().toISOString().slice(0,10);
+    const futuras = reservas.filter(r => r.data >= hoje && r.status !== 'cancelada' && r.status !== 'concluida');
+    const passadas = reservas.filter(r => r.data < hoje || r.status === 'concluida' || r.status === 'cancelada');
+
+    return (
+        <div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2rem'}}>
+                <h2 style={{fontSize:'2rem',fontWeight:'900',color:'#3498db',margin:0}}>📅 Reservas</h2>
+                <button onClick={onAdd} style={{padding:'1rem 2rem',background:'linear-gradient(135deg,#3498db,#2980b9)',border:'none',borderRadius:'12px',color:'#fff',fontWeight:'800',cursor:'pointer',boxShadow:'0 4px 15px rgba(52,152,219,0.4)'}}>+ NOVA RESERVA</button>
+            </div>
+
+            {/* Stats */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
+                {[
+                    {l:'Hoje',   v:reservas.filter(r=>r.data===hoje && r.status!=='cancelada').length, c:'#3498db', i:'📅'},
+                    {l:'Pendentes', v:reservas.filter(r=>r.status==='pendente').length, c:'#f39c12', i:'⏳'},
+                    {l:'Confirmadas', v:reservas.filter(r=>r.status==='confirmada').length, c:'#4a9d4e', i:'✅'},
+                    {l:'Esta Semana', v:reservas.filter(r=>{
+                        const d=new Date(r.data); const h=new Date();
+                        return d>=h && d<=new Date(h.getTime()+7*864e5) && r.status!=='cancelada';
+                    }).length, c:'#9b59b6', i:'📆'},
+                ].map(s=>(
+                    <div key={s.l} style={{background:'var(--surface)',padding:'1.2rem',borderRadius:'12px',border:`2px solid ${s.c}`,textAlign:'center'}}>
+                        <div style={{fontSize:'1.8rem'}}>{s.i}</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.8rem',fontWeight:'700'}}>{s.l}</div>
+                        <div style={{fontSize:'1.8rem',fontWeight:'900',color:s.c}}>{s.v}</div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Lista futuras */}
+            <h3 style={{color:'var(--text)',marginBottom:'1rem',fontWeight:'800'}}>📆 Próximas Reservas</h3>
+            {futuras.length === 0 && (
+                <div style={{textAlign:'center',padding:'3rem',background:'var(--surface)',borderRadius:'16px',border:'2px dashed var(--border)',marginBottom:'2rem'}}>
+                    <div style={{fontSize:'3rem'}}>📅</div>
+                    <p style={{color:'var(--text-secondary)'}}>Nenhuma reserva futura</p>
+                </div>
+            )}
+            <div style={{display:'grid',gap:'1rem',marginBottom:'2rem'}}>
+                {futuras.map(r=>(
+                    <div key={r.id} style={{background:'var(--surface)',borderRadius:'14px',border:`3px solid ${statusColor[r.status]}`,padding:'1.5rem',boxShadow:`0 4px 15px ${statusColor[r.status]}22`}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:'1rem'}}>
+                            <div>
+                                <div style={{display:'flex',alignItems:'center',gap:'0.8rem',marginBottom:'0.5rem'}}>
+                                    <span style={{padding:'0.3rem 0.9rem',background:statusColor[r.status],borderRadius:'20px',fontSize:'0.8rem',fontWeight:'800',color:'#fff'}}>{statusLabel[r.status]}</span>
+                                    {r.data === hoje && <span style={{padding:'0.3rem 0.8rem',background:'#f39c12',borderRadius:'20px',fontSize:'0.8rem',fontWeight:'800',color:'#000'}}>HOJE!</span>}
+                                </div>
+                                <h3 style={{fontSize:'1.3rem',fontWeight:'900',margin:'0 0 0.3rem'}}>{r.nome}</h3>
+                                <div style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>📞 {r.telefone}</div>
+                                <div style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>
+                                    📅 {new Date(r.data+'T12:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})} às {r.hora}
+                                </div>
+                                <div style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>👥 {r.pessoas} pessoa{r.pessoas>1?'s':''} · {r.mesa ? `Mesa ${r.mesa}` : 'Mesa a definir'}</div>
+                                {r.obs && <div style={{marginTop:'0.5rem',padding:'0.5rem',background:'var(--background)',borderRadius:'8px',fontSize:'0.85rem',color:'var(--text-secondary)'}}>💬 {r.obs}</div>}
+                            </div>
+                            <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                                {r.status==='pendente' && <button onClick={()=>setStatus(r.id,'confirmada')} style={{padding:'0.7rem 1rem',background:'#4a9d4e',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}>✅ CONFIRMAR</button>}
+                                {r.status==='confirmada' && <button onClick={()=>setStatus(r.id,'concluida')} style={{padding:'0.7rem 1rem',background:'#6c757d',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}>🏁 CONCLUIR</button>}
+                                {r.status!=='cancelada' && <button onClick={()=>setStatus(r.id,'cancelada')} style={{padding:'0.7rem 1rem',background:'transparent',border:'2px solid #e74c3c',borderRadius:'8px',color:'#e74c3c',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}>❌</button>}
+                                <button onClick={()=>del(r.id)} style={{padding:'0.7rem 1rem',background:'transparent',border:'2px solid var(--border)',borderRadius:'8px',color:'var(--text-secondary)',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem'}}>🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Histórico */}
+            {passadas.length>0 && (
+                <details style={{marginTop:'1rem'}}>
+                    <summary style={{cursor:'pointer',color:'var(--text-secondary)',fontWeight:'700',padding:'0.5rem'}}>📋 Histórico ({passadas.length})</summary>
+                    <div style={{display:'grid',gap:'0.6rem',marginTop:'1rem'}}>
+                        {passadas.slice(0,15).map(r=>(
+                            <div key={r.id} style={{background:'var(--surface)',borderRadius:'10px',padding:'1rem',border:`2px solid ${statusColor[r.status]}`,opacity:0.6,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                <div>
+                                    <span style={{padding:'0.25rem 0.7rem',background:statusColor[r.status],borderRadius:'20px',fontSize:'0.75rem',fontWeight:'800',color:'#fff',marginRight:'0.7rem'}}>{statusLabel[r.status]}</span>
+                                    <strong>{r.nome}</strong> · {r.pessoas} pessoas · {new Date(r.data+'T12:00').toLocaleDateString('pt-BR')} {r.hora}
+                                </div>
+                                <button onClick={()=>del(r.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--text-secondary)',fontSize:'1.1rem'}}>🗑️</button>
+                            </div>
+                        ))}
+                    </div>
+                </details>
+            )}
+        </div>
+    );
+}
+
+function ReservaModal({tables, config, onClose}) {
+    const [d, setD] = useState({
+        nome:'', telefone:'', data: new Date().toISOString().slice(0,10),
+        hora:'20:00', pessoas:2, mesa:'', obs:'', status:'pendente'
+    });
+
+    const save = () => {
+        if (!d.nome.trim())      { alert('❌ Informe o nome!'); return; }
+        if (!d.telefone.trim())  { alert('❌ Informe o telefone!'); return; }
+        if (!d.data)             { alert('❌ Informe a data!'); return; }
+        if (!d.hora)             { alert('❌ Informe o horário!'); return; }
+
+        const reserva = { ...d, id: Date.now(), timestamp: Date.now(), createdAt: Date.now() };
+        db.ref(`reservas/${reserva.id}`).set(reserva);
+        playSound('reserva');
+        alert(`✅ Reserva de ${d.nome} criada!\n📅 ${new Date(d.data+'T12:00').toLocaleDateString('pt-BR')} às ${d.hora}\n👥 ${d.pessoas} pessoa(s)`);
+        onClose();
+    };
+
+    const mesasLivres = tables.filter(t=>t.status==='livre').map(t=>t.id);
+
+    return (
+        <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'1rem'}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:'var(--surface)',borderRadius:'20px',maxWidth:'480px',width:'100%',border:'3px solid #3498db',maxHeight:'92vh',overflowY:'auto'}}>
+                <div style={{padding:'2rem 2rem 1rem',borderBottom:'2px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',position:'sticky',top:0,background:'var(--surface)'}}>
+                    <h3 style={{color:'#3498db',fontSize:'1.6rem',fontWeight:'900',margin:0}}>📅 Nova Reserva</h3>
+                    <button onClick={onClose} style={{background:'transparent',border:'none',fontSize:'1.8rem',cursor:'pointer',color:'var(--text-secondary)'}}>×</button>
+                </div>
+                <div style={{padding:'1.5rem 2rem 2rem',display:'grid',gap:'1.2rem'}}>
+                    {[
+                        {label:'👤 Nome do Cliente *', key:'nome', type:'text', placeholder:'Ex: João Silva'},
+                        {label:'📞 Telefone *', key:'telefone', type:'text', placeholder:'(00) 90000-0000'},
+                        {label:'📅 Data *', key:'data', type:'date'},
+                        {label:'🕐 Horário *', key:'hora', type:'time'},
+                    ].map(f=>(
+                        <div key={f.key}>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>{f.label}</label>
+                            <input type={f.type} value={d[f.key]} placeholder={f.placeholder||''} onChange={e=>setD({...d,[f.key]:e.target.value})}
+                                style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                        </div>
+                    ))}
+                    <div>
+                        <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>👥 Número de Pessoas</label>
+                        <input type="number" min="1" max="50" value={d.pessoas} onChange={e=>setD({...d,pessoas:parseInt(e.target.value)||1})}
+                            style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                    </div>
+                    <div>
+                        <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>🪑 Mesa (opcional)</label>
+                        <select value={d.mesa} onChange={e=>setD({...d,mesa:e.target.value})}
+                            style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}}>
+                            <option value="">A definir na chegada</option>
+                            {mesasLivres.map(m=><option key={m} value={m}>Mesa {m}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.4rem'}}>💬 Observações</label>
+                        <textarea value={d.obs} onChange={e=>setD({...d,obs:e.target.value})} rows={3} placeholder="Aniversário, alergias, pedidos especiais..."
+                            style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem',resize:'vertical'}} />
+                    </div>
+                    <div style={{display:'flex',gap:'1rem',marginTop:'0.5rem'}}>
+                        <button onClick={onClose} style={{flex:1,padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text-secondary)',fontWeight:'800',cursor:'pointer'}}>CANCELAR</button>
+                        <button onClick={save} style={{flex:2,padding:'1rem',background:'linear-gradient(135deg,#3498db,#2980b9)',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'900',cursor:'pointer',fontSize:'1rem'}}>📅 CONFIRMAR RESERVA</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════
+//  📋  CARDÁPIO QR PÚBLICO
+// ═══════════════════════════════════════════════════════
+
+function CardapioQRTab({products, config}) {
+    const qrRef = useRef(null);
+    const [qrGenerated, setQrGenerated] = useState(false);
+
+    // URL do cardápio público
+    const cardapioUrl = `${window.location.href.split('?')[0]}?cardapio=1`;
+
+    useEffect(() => {
+        if (qrRef.current && window.QRCode && !qrGenerated) {
+            window.QRCode.toCanvas(qrRef.current, cardapioUrl, {
+                width: 250, margin: 2,
+                color: {dark:'#000000', light:'#ffffff'}
+            }, err => { if (!err) setQrGenerated(true); });
+        }
+    }, []);
+
+    const grouped = products.filter(p=>p.active).reduce((a,p)=>{ if(!a[p.category])a[p.category]=[]; a[p.category].push(p); return a; },{});
+
+    const printCardapio = () => {
+        const w = window.open('', '_blank');
+        const items = products.filter(p=>p.active);
+        const cats = [...new Set(items.map(p=>p.category))];
+        w.document.write(`
+            <html><head><title>Cardápio - ${config.barName}</title>
+            <meta charset="UTF-8">
+            <style>
+                body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:2rem;background:#fff;color:#000}
+                h1{text-align:center;color:#d4a574;font-size:2.5rem;border-bottom:3px solid #d4a574;padding-bottom:1rem}
+                h2{color:#333;font-size:1.5rem;margin-top:2rem;border-bottom:1px solid #ddd;padding-bottom:0.5rem}
+                .item{display:flex;justify-content:space-between;align-items:center;padding:0.8rem 0;border-bottom:1px solid #f0f0f0}
+                .nome{font-size:1.1rem;font-weight:600}
+                .preco{font-size:1.2rem;font-weight:900;color:#d4a574}
+                .emoji{font-size:1.8rem;margin-right:1rem}
+                @media print{body{padding:1rem}}
+            </style></head><body>
+            ${config.logo ? `<div style="text-align:center;margin-bottom:1rem"><img src="${config.logo}" style="max-width:200px;max-height:150px"></div>` : ''}
+            <h1>${config.barName}</h1>
+            ${cats.map(cat=>`
+                <h2>${cat}</h2>
+                ${items.filter(p=>p.category===cat).map(p=>`
+                    <div class="item">
+                        <div style="display:flex;align-items:center">
+                            <span class="emoji">${p.imageType==='upload'?'🍽️':p.image}</span>
+                            <span class="nome">${p.name}</span>
+                        </div>
+                        <span class="preco">${config.currency} ${parseFloat(p.price).toFixed(2)}</span>
+                    </div>
+                `).join('')}
+            `).join('')}
+            </body></html>
+        `);
+        w.document.close();
+        w.print();
+    };
+
+    return (
+        <div>
+            <h2 style={{fontSize:'2rem',fontWeight:'900',color:'#4a9d4e',marginBottom:'2rem'}}>📋 Cardápio Online & QR Code</h2>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'2rem',marginBottom:'2rem'}}>
+                {/* QR Code */}
+                <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid #4a9d4e',textAlign:'center'}}>
+                    <h3 style={{color:'#4a9d4e',marginBottom:'1.5rem',fontWeight:'800'}}>📱 QR Code do Cardápio</h3>
+                    <div style={{background:'#fff',padding:'1rem',borderRadius:'12px',display:'inline-block',marginBottom:'1.5rem'}}>
+                        <canvas ref={qrRef} />
+                    </div>
+                    <p style={{color:'var(--text-secondary)',fontSize:'0.85rem',marginBottom:'1rem'}}>
+                        Clientes escaneiam e veem o cardápio completo
+                    </p>
+                    <div style={{display:'grid',gap:'0.8rem'}}>
+                        <button onClick={() => {navigator.clipboard.writeText(cardapioUrl); alert('✅ Link copiado!');}}
+                            style={{padding:'0.9rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
+                            📋 COPIAR LINK
+                        </button>
+                        <button onClick={printCardapio}
+                            style={{padding:'0.9rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
+                            🖨️ IMPRIMIR CARDÁPIO
+                        </button>
+                    </div>
+                </div>
+
+                {/* Preview */}
+                <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid var(--border)'}}>
+                    <h3 style={{color:'var(--text)',marginBottom:'1.5rem',fontWeight:'800'}}>👁️ Prévia do Cardápio</h3>
+                    <div style={{maxHeight:'400px',overflowY:'auto'}}>
+                        {Object.entries(grouped).map(([cat, items])=>(
+                            <div key={cat} style={{marginBottom:'1.5rem'}}>
+                                <div style={{fontWeight:'900',color:'#d4a574',marginBottom:'0.7rem',fontSize:'1rem',borderBottom:'2px solid var(--border)',paddingBottom:'0.4rem'}}>{cat}</div>
+                                {items.map(p=>(
+                                    <div key={p.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'0.5rem 0'}}>
+                                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem'}}>
+                                            <span style={{fontSize:'1.5rem'}}>
+                                                {p.imageType==='upload' ? <img src={p.image} style={{width:'28px',height:'28px',borderRadius:'6px',objectFit:'cover'}} /> : p.image}
+                                            </span>
+                                            <span style={{fontWeight:'600',fontSize:'0.95rem'}}>{p.name}</span>
+                                        </div>
+                                        <span style={{fontWeight:'900',color:'#d4a574',fontSize:'0.95rem'}}>{config.currency} {parseFloat(p.price).toFixed(2)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* Instruções */}
+            <div style={{background:'var(--surface)',borderRadius:'12px',padding:'1.5rem',border:'2px solid var(--border)'}}>
+                <h4 style={{fontWeight:'800',marginBottom:'1rem'}}>💡 Como usar</h4>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'1rem'}}>
+                    {[
+                        {i:'1️⃣', t:'Imprima o QR Code', d:'Coloque nas mesas e balcão'},
+                        {i:'2️⃣', t:'Cliente escaneia', d:'Abre o cardápio no celular'},
+                        {i:'3️⃣', t:'Vê os produtos', d:'Com fotos, preços e categorias'},
+                        {i:'4️⃣', t:'Faz o pedido', d:'Pode chamar o garçom pelo app'},
+                    ].map(s=>(
+                        <div key={s.i} style={{padding:'1rem',background:'var(--background)',borderRadius:'10px',textAlign:'center'}}>
+                            <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>{s.i}</div>
+                            <div style={{fontWeight:'800',marginBottom:'0.3rem'}}>{s.t}</div>
+                            <div style={{color:'var(--text-secondary)',fontSize:'0.85rem'}}>{s.d}</div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════
+//  🏆  HISTÓRICO DE CLIENTES / FIDELIDADE
+// ═══════════════════════════════════════════════════════
+
+function ClientesTab({sales, config}) {
+    const [search, setSearch] = useState('');
+    const [selCliente, setSelCliente] = useState(null);
+
+    // Agrupar vendas por cliente
+    const clientMap = {};
+    (sales||[]).forEach(s => {
+        const name = s.customerName || 'Cliente';
+        const phone = s.customerPhone || '';
+        const key = phone || name;
+        if (!clientMap[key]) {
+            clientMap[key] = { name, phone, visitas:0, totalGasto:0, pedidos:[], ultimaVisita:null, tipoFav:'' };
+        }
+        clientMap[key].visitas++;
+        clientMap[key].totalGasto += s.total||0;
+        clientMap[key].pedidos.push(s);
+        if (!clientMap[key].ultimaVisita || s.timestamp > clientMap[key].ultimaVisita) {
+            clientMap[key].ultimaVisita = s.timestamp;
+        }
+    });
+
+    // Calcular item favorito
+    Object.values(clientMap).forEach(c => {
+        const freq = {};
+        c.pedidos.forEach(p => (p.orders||[]).forEach(o => { freq[o.name]=(freq[o.name]||0)+o.quantity; }));
+        const sorted = Object.entries(freq).sort((a,b)=>b[1]-a[1]);
+        c.itemFav = sorted[0]?.[0] || '—';
+    });
+
+    const clientes = Object.values(clientMap).sort((a,b) => b.totalGasto - a.totalGasto);
+    const filtered = clientes.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search));
+
+    const tier = (total) => {
+        if (total >= 500) return {label:'🥇 VIP', color:'#f39c12'};
+        if (total >= 200) return {label:'🥈 Frequente', color:'#6c757d'};
+        if (total >= 50)  return {label:'🥉 Regular', color:'#cd7f32'};
+        return {label:'🆕 Novo', color:'#3498db'};
+    };
+
+    return (
+        <div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2rem',flexWrap:'wrap',gap:'1rem'}}>
+                <h2 style={{fontSize:'2rem',fontWeight:'900',color:'#9b59b6',margin:0}}>🏆 Histórico de Clientes</h2>
+                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',background:'var(--surface)',border:'2px solid var(--border)',borderRadius:'10px',padding:'0.5rem 1rem'}}>
+                    <span>🔍</span>
+                    <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar cliente..."
+                        style={{background:'transparent',border:'none',outline:'none',color:'var(--text)',fontSize:'1rem',width:'180px'}} />
+                </div>
+            </div>
+
+            {/* Resumo */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
+                {[
+                    {l:'Total Clientes', v:clientes.length, c:'#9b59b6', i:'👥'},
+                    {l:'VIP (R$500+)', v:clientes.filter(c=>c.totalGasto>=500).length, c:'#f39c12', i:'🥇'},
+                    {l:'Frequentes', v:clientes.filter(c=>c.totalGasto>=200&&c.totalGasto<500).length, c:'#6c757d', i:'🥈'},
+                    {l:'Ticket Médio', v:`${config.currency} ${clientes.length?( clientes.reduce((s,c)=>s+c.totalGasto,0)/clientes.length).toFixed(0):'0'}`, c:'#4a9d4e', i:'💰'},
+                ].map(s=>(
+                    <div key={s.l} style={{background:'var(--surface)',padding:'1.2rem',borderRadius:'12px',border:`2px solid ${s.c}`,textAlign:'center'}}>
+                        <div style={{fontSize:'1.8rem'}}>{s.i}</div>
+                        <div style={{color:'var(--text-secondary)',fontSize:'0.75rem',fontWeight:'700'}}>{s.l}</div>
+                        <div style={{fontSize:'1.5rem',fontWeight:'900',color:s.c}}>{s.v}</div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Lista */}
+            {filtered.length === 0 && (
+                <div style={{textAlign:'center',padding:'4rem',background:'var(--surface)',borderRadius:'16px',border:'2px dashed var(--border)'}}>
+                    <div style={{fontSize:'3rem'}}>🏆</div>
+                    <p style={{color:'var(--text-secondary)'}}>Nenhum cliente encontrado</p>
+                </div>
+            )}
+            <div style={{display:'grid',gap:'1rem'}}>
+                {filtered.map((c,i) => {
+                    const t = tier(c.totalGasto);
+                    return (
+                        <div key={i} onClick={()=>setSelCliente(selCliente===i?null:i)} style={{
+                            background:'var(--surface)',borderRadius:'14px',
+                            border:`2px solid ${t.color}`,padding:'1.5rem',
+                            cursor:'pointer',transition:'all 0.2s'
+                        }}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'1rem'}}>
+                                <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+                                    <div style={{width:'50px',height:'50px',borderRadius:'50%',background:t.color,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'1.3rem',fontWeight:'900',color:'#fff',flexShrink:0}}>
+                                        {c.name.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem'}}>
+                                            <strong style={{fontSize:'1.1rem'}}>{c.name}</strong>
+                                            <span style={{padding:'0.2rem 0.7rem',background:t.color,borderRadius:'20px',fontSize:'0.75rem',fontWeight:'800',color:'#fff'}}>{t.label}</span>
+                                        </div>
+                                        {c.phone && <div style={{color:'var(--text-secondary)',fontSize:'0.85rem'}}>📞 {c.phone}</div>}
+                                        <div style={{color:'var(--text-secondary)',fontSize:'0.85rem'}}>
+                                            {c.visitas} visita{c.visitas>1?'s':''} · ⭐ Favorito: {c.itemFav}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style={{textAlign:'right'}}>
+                                    <div style={{fontSize:'1.5rem',fontWeight:'900',color:t.color}}>{config.currency} {c.totalGasto.toFixed(2)}</div>
+                                    <div style={{color:'var(--text-secondary)',fontSize:'0.8rem'}}>
+                                        Última: {c.ultimaVisita ? new Date(c.ultimaVisita).toLocaleDateString('pt-BR') : '—'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Detalhes expandidos */}
+                            {selCliente === i && (
+                                <div style={{marginTop:'1.5rem',paddingTop:'1.5rem',borderTop:'2px solid var(--border)'}}>
+                                    <h4 style={{marginBottom:'1rem',color:'var(--text)'}}>📋 Histórico de Pedidos</h4>
+                                    <div style={{display:'grid',gap:'0.7rem',maxHeight:'250px',overflowY:'auto'}}>
+                                        {c.pedidos.sort((a,b)=>b.timestamp-a.timestamp).map((p,j)=>(
+                                            <div key={j} style={{background:'var(--background)',borderRadius:'10px',padding:'1rem',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                                                <div>
+                                                    <div style={{fontWeight:'700',marginBottom:'0.2rem'}}>
+                                                        {p.type==='delivery'?'🛵 Delivery':`🍽️ Mesa ${p.tableId}`}
+                                                        {p.waiterName && ` · ${p.waiterName}`}
+                                                    </div>
+                                                    <div style={{color:'var(--text-secondary)',fontSize:'0.8rem'}}>
+                                                        {(p.orders||[]).slice(0,3).map(o=>`${o.quantity}x ${o.name}`).join(', ')}
+                                                        {(p.orders||[]).length>3?'...':''}
+                                                    </div>
+                                                    <div style={{color:'var(--text-secondary)',fontSize:'0.8rem'}}>
+                                                        {new Date(p.timestamp).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}
+                                                    </div>
+                                                </div>
+                                                <div style={{fontWeight:'900',color:'#d4a574',fontSize:'1.1rem'}}>{config.currency} {p.total.toFixed(2)}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════
+//  FIM NOVOS COMPONENTES
+// ═══════════════════════════════════════════════════════
 
 function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
     const [cart, setCart] = useState([]);
