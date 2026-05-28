@@ -1144,41 +1144,47 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
     }, [tables]);
     
     const go = () => {
-        // Primeiro verifica sistema de usuários
-        db.ref('users').once('value').then(snapshot => {
-            const users = snapshot.val();
-            if (users) {
-                const user = Object.values(users).find(u => u.pin === pin && u.active);
-                if (user) {
-                    // Usuário encontrado no novo sistema
-                    if (user.role === 'waiter') {
-                        // Para garçons, precisa buscar o waiterId
-                        const waiter = waiters.find(w => w.pin === pin && w.active);
-                        if (waiter) {
-                            setUser({name:user.name, role:'waiter', waiterId:waiter.id});
-                            setView('waiter');
+        // Validar baseado no tipo selecionado
+        if (mode === 'master') {
+            if (pin === '0000') {setUser({name:'Master',role:'master'}); setView('master');}
+            else alert('❌ PIN de Master incorreto!');
+        } else if (mode === 'admin') {
+            if (pin === '9999') {setUser({name:'Admin',role:'admin'}); setView('admin');}
+            else alert('❌ PIN de Admin incorreto!');
+        } else if (mode === 'balcao') {
+            if (pin === '8888') {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
+            else alert('❌ PIN de Balcão incorreto!');
+        } else if (mode === 'garcom') {
+            if (!nome.trim()) { alert('❌ Informe seu nome!'); return; }
+            const w = waiters.find(x => x.pin === pin && x.active);
+            if (w) {setUser({name: nome.trim(), role:'waiter', waiterId:w.id}); setView('waiter');}
+            else alert('❌ PIN incorreto!');
+        } else {
+            // Fallback: verifica novo sistema
+            db.ref('users').once('value').then(snapshot => {
+                const users = snapshot.val();
+                if (users) {
+                    const user = Object.values(users).find(u => u.pin === pin && u.active);
+                    if (user) {
+                        if (user.role === 'waiter') {
+                            const waiter = waiters.find(w => w.pin === pin && w.active);
+                            if (waiter) {
+                                setUser({name:user.name, role:'waiter', waiterId:waiter.id});
+                                setView('waiter');
+                            } else {
+                                setUser({name:user.name, role:user.role});
+                                setView(user.role);
+                            }
                         } else {
                             setUser({name:user.name, role:user.role});
                             setView(user.role);
                         }
-                    } else {
-                        setUser({name:user.name, role:user.role});
-                        setView(user.role);
+                        return;
                     }
-                    return;
                 }
-            }
-            
-            // Fallback para sistema antigo (compatibilidade)
-            if (pin === '0000') {setUser({name:'Master',role:'master'}); setView('master');}
-            else if (pin === '9999') {setUser({name:'Admin',role:'admin'}); setView('admin');}
-            else if (pin === '8888') {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
-            else {
-                const w = waiters.find(x => x.pin === pin && x.active);
-                if (w) {setUser({name:w.name,role:'waiter',waiterId:w.id}); setView('waiter');}
-                else alert('❌ PIN incorreto!');
-            }
-        });
+                alert('❌ PIN incorreto!');
+            });
+        }
     };
     
     // Cardápio público (acesso via QR sem login)
@@ -1326,6 +1332,43 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
                 
                 {mode === 'staff' && !ask && (
                     <div className="slide-in">
+                        {/* Seleção de Tipo de Usuário */}
+                        <div style={{marginBottom:'1.5rem'}}>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.6rem',fontSize:'0.9rem'}}>👤 TIPO DE USUÁRIO</label>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.6rem'}}>
+                                {[
+                                    {val:'master', label:'👑 Master', desc:'Acesso total'},
+                                    {val:'admin', label:'⚙️ Admin', desc:'Gerenciamento'},
+                                    {val:'balcao', label:'💰 Balcão', desc:'Pedidos'},
+                                    {val:'garcom', label:'👨‍🍳 Garçom', desc:'Atendimento'},
+                                ].map(u => (
+                                    <button key={u.val} onClick={() => {setMode(u.val); setAsk(u.val==='garcom');}}
+                                        style={{
+                                            padding:'0.9rem',
+                                            background: mode===u.val ? 'var(--primary)' : 'var(--surface)',
+                                            border:`2px solid ${mode===u.val ? 'var(--primary)' : 'var(--border)'}`,
+                                            borderRadius:'10px',color: mode===u.val ? '#000' : 'var(--text)',
+                                            fontWeight:'700',cursor:'pointer',fontSize:'0.85rem',transition:'all 0.2s'
+                                        }}>
+                                        {u.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Nome do Garçom (se selecionado) */}
+                        {mode === 'garcom' && ask && (
+                            <div style={{marginBottom:'1.5rem'}}>
+                                <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.6rem'}}>👨‍🍳 Seu Nome</label>
+                                <input type="text" value={nome} onChange={e => setNome(e.target.value)}
+                                    placeholder="Ex: João" onKeyPress={e => {if(e.key==='Enter') go();}}
+                                    style={{
+                                        width:'100%',padding:'1rem',background:'var(--surface)',border:'2px solid var(--border)',
+                                        borderRadius:'10px',color:'var(--text)',fontSize:'1rem',marginBottom:'1rem'
+                                    }} />
+                            </div>
+                        )}
+
                         <PasswordInput 
                             value={pin} 
                             onChange={e => setPin(e.target.value)} 
@@ -4361,7 +4404,8 @@ function DeliveryTab({deliveries, products, config, onNew}) {
                         <h3 style={{color:'#3498db',fontSize:'1.5rem',fontWeight:'900',marginBottom:'1.5rem',textAlign:'center'}}>🛵 Tempo de Entrega</h3>
                         <p style={{color:'var(--text-secondary)',marginBottom:'1.5rem',textAlign:'center'}}>Em quantos minutos a entrega chegará?</p>
                         
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'0.8rem',marginBottom:'2rem'}}>
+                        {/* Botões de tempo rápido */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'0.8rem',marginBottom:'1.5rem'}}>
                             {[15,20,30].map(t=>(
                                 <button key={t} onClick={()=>setTempoModal({...tempoModal,tempo:t})} style={{
                                     padding:'1rem',
@@ -4373,13 +4417,25 @@ function DeliveryTab({deliveries, products, config, onNew}) {
                             ))}
                         </div>
 
-                        <div style={{display:'grid',gap:'1rem',gridTemplateColumns:'1fr'}}>
+                        {/* Entrada manual */}
+                        <div style={{marginBottom:'1.5rem'}}>
+                            <label style={{display:'block',color:'var(--text-secondary)',fontWeight:'700',marginBottom:'0.5rem',fontSize:'0.9rem'}}>⌨️ Ou digite um valor customizado:</label>
+                            <input type="number" min="1" max="180" 
+                                value={tempoModal.tempo} 
+                                onChange={e=>setTempoModal({...tempoModal,tempo:parseInt(e.target.value)||0})}
+                                style={{
+                                    width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',
+                                    borderRadius:'10px',color:'var(--text)',fontSize:'1.1rem',fontWeight:'700',textAlign:'center'
+                                }} />
+                        </div>
+
+                        <div style={{display:'grid',gap:'1rem',gridTemplateColumns:'1fr',marginBottom:'1.5rem'}}>
                             <div style={{background:'var(--background)',borderRadius:'10px',padding:'1rem',textAlign:'center',fontWeight:'700',color:'var(--text-secondary)'}}>
-                                Tempo selecionado: <span style={{color:'#3498db',fontSize:'1.3rem'}}>{tempoModal.tempo}′</span>
+                                ⏱️ <span style={{color:'#3498db',fontSize:'1.3rem'}}>{tempoModal.tempo}′</span>
                             </div>
                         </div>
 
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem',marginTop:'1.5rem'}}>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem'}}>
                             <button onClick={()=>setTempoModal(null)} style={{
                                 padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',
                                 borderRadius:'10px',color:'var(--text)',fontWeight:'800',cursor:'pointer'
