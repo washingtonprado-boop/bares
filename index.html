@@ -610,7 +610,7 @@ function DeliveryPublico({config, theme, toggleTheme}) {
     const [pedidoId, setPedidoId]   = useState(null);
     const [pedidoStatus, setPedidoStatus] = useState(null);
     const [form, setForm] = useState({
-        nome:'', telefone:'', endereco:'', pagamento:'dinheiro', troco:'', taxa:''
+        nome:'', telefone:'', endereco:'', referencia:'', pagamento:'dinheiro', troco:'', taxa:''
     });
 
     useEffect(() => {
@@ -664,6 +664,7 @@ function DeliveryPublico({config, theme, toggleTheme}) {
             total,
             status: 'pendente',
             origem: 'online',
+            referencia: form.referencia || null,
             createdAt: Date.now()
         };
 
@@ -684,6 +685,23 @@ function DeliveryPublico({config, theme, toggleTheme}) {
     // ─── STEP 3: Rastreamento ───
     if (step === 3) {
         const info = statusInfo[pedidoStatus] || statusInfo['pendente'];
+        
+        // Calcular tempo restante se saiu
+        let tempoRestante = null;
+        const [pedidoData, setPedidoData] = useState(null);
+        
+        useEffect(() => {
+            db.ref(`deliveries/${pedidoId}`).once('value').then(snap => {
+                if (snap.val()) setPedidoData(snap.val());
+            });
+        }, [pedidoId]);
+        
+        if (pedidoData && pedidoData.horaChegadaEstimada) {
+            const agora = Date.now();
+            const minutos = Math.max(0, Math.round((pedidoData.horaChegadaEstimada - agora) / 60000));
+            tempoRestante = minutos;
+        }
+        
         return (
             <div style={{minHeight:'100vh',background:'var(--background)',color:'var(--text)',display:'flex',alignItems:'center',justifyContent:'center',padding:'1.5rem'}}>
                 <div style={{maxWidth:'480px',width:'100%',textAlign:'center'}}>
@@ -691,6 +709,16 @@ function DeliveryPublico({config, theme, toggleTheme}) {
                         <div style={{fontSize:'5rem',marginBottom:'1rem'}}>{info.icon}</div>
                         <h2 style={{fontSize:'1.6rem',fontWeight:'900',color:info.color,marginBottom:'0.5rem'}}>{info.label}</h2>
                         <p style={{color:'var(--text-secondary)',marginBottom:'2rem'}}>Pedido #{String(pedidoId).slice(-5)}</p>
+
+                        {/* Tempo estimado */}
+                        {tempoRestante !== null && pedidoStatus === 'saiu' && (
+                            <div style={{background:'var(--background)',borderRadius:'16px',padding:'1.5rem',marginBottom:'2rem',border:`2px solid ${info.color}`}}>
+                                <div style={{fontSize:'3rem',fontWeight:'900',color:info.color,marginBottom:'0.5rem'}}>
+                                    {tempoRestante > 0 ? `${tempoRestante}′` : 'Chegando agora!'}
+                                </div>
+                                <p style={{color:'var(--text-secondary)',fontSize:'0.9rem'}}>Tempo estimado de chegada</p>
+                            </div>
+                        )}
 
                         {/* Barra de progresso */}
                         <div style={{background:'var(--background)',borderRadius:'20px',height:'12px',marginBottom:'2rem',overflow:'hidden'}}>
@@ -743,9 +771,28 @@ function DeliveryPublico({config, theme, toggleTheme}) {
                             </div>
                         </div>
 
-                        <p style={{color:'var(--text-secondary)',fontSize:'0.85rem'}}>
-                            📞 {form.telefone} · 📍 {form.endereco}
+                        <p style={{color:'var(--text-secondary)',fontSize:'0.85rem',marginBottom:'1.5rem'}}>
+                            <div>📞 {form.telefone}</div>
+                            <div>📍 {form.endereco}</div>
+                            {form.referencia && <div>🗺️ {form.referencia}</div>}
                         </p>
+
+                        {/* Botão RECEBIDO quando saiu */}
+                        {pedidoStatus === 'saiu' && (
+                            <button onClick={() => {
+                                db.ref(`deliveries/${pedidoId}/status`).set('entregue');
+                                playSound('fechamento');
+                            }} style={{
+                                width:'100%',padding:'1.2rem',marginBottom:'1rem',
+                                background:'linear-gradient(135deg,#4a9d4e,#45a049)',
+                                border:'none',borderRadius:'12px',color:'#fff',
+                                fontWeight:'900',fontSize:'1.1rem',cursor:'pointer',
+                                boxShadow:'0 6px 20px rgba(74,157,78,0.4)'
+                            }}>
+                                ✅ EU RECEBI!
+                            </button>
+                        )}
+
                         {pedidoStatus !== 'entregue' && pedidoStatus !== 'cancelado' && (
                             <p style={{color:'var(--text-secondary)',fontSize:'0.8rem',marginTop:'0.5rem'}}>
                                 🔄 Atualizando automaticamente...
@@ -802,7 +849,7 @@ function DeliveryPublico({config, theme, toggleTheme}) {
                         {[
                             {key:'nome',      label:'👤 Seu nome *',     type:'text',  ph:'Ex: João Silva'},
                             {key:'telefone',  label:'📞 Telefone *',     type:'tel',   ph:'(00) 90000-0000'},
-                            {key:'endereco',  label:'📍 Endereço completo *', type:'text', ph:'Rua, número, bairro, referência...'},
+                            {key:'endereco',  label:'📍 Endereço completo *', type:'text', ph:'Rua, número, bairro...'},
                         ].map(f=>(
                             <div key={f.key}>
                                 <label style={{display:'block',fontWeight:'700',color:'var(--text-secondary)',marginBottom:'0.4rem'}}>{f.label}</label>
@@ -811,6 +858,15 @@ function DeliveryPublico({config, theme, toggleTheme}) {
                                     style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
                             </div>
                         ))}
+
+                        {/* Ponto de Referência */}
+                        <div>
+                            <label style={{display:'block',fontWeight:'700',color:'var(--text-secondary)',marginBottom:'0.4rem'}}>🗺️ Ponto de Referência (opcional)</label>
+                            <input type="text" value={form.referencia || ''} placeholder="Ex: ao lado da padaria, próximo ao semáforo..."
+                                onChange={e=>setForm({...form,referencia:e.target.value})}
+                                style={{width:'100%',padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',borderRadius:'10px',color:'var(--text)',fontSize:'1rem'}} />
+                            <p style={{color:'var(--text-secondary)',fontSize:'0.8rem',margin:'0.3rem 0 0'}}>Ajuda o entregador a encontrar mais rápido</p>
+                        </div>
 
                         {/* Pagamento */}
                         <div>
@@ -2181,6 +2237,14 @@ function ProductModal({edit, config, onClose}) {
             '🌰', '🥜', '🍿',
             // Outros
             '🥧', '🍕', '🫓', '🥙'
+        ],
+        'Açaiteria': [
+            // Açaí e Açaí Bowl
+            '🍇', '🫐', '🍓', '🥄', '🥑', '🍌', '🥝', '🍓', '🫐', '🌰', '🥜', '🍦'
+        ],
+        'Sorveteria': [
+            // Sorvete em todas as formas
+            '🍦', '🍧', '🍨', '🍰', '🧁', '🍫', '🥄', '🍌', '🍓', '🍒', '🥝', '🫐', '🍇'
         ]
     };
     
@@ -4106,10 +4170,18 @@ function DeliveryTab({deliveries, products, config, onNew}) {
     };
     const nextStatus = {pendente:'preparando', preparando:'saiu', saiu:'entregue'};
     const nextLabel  = {pendente:'▶ INICIAR PREPARO', preparando:'🛵 SAIU P/ ENTREGA', saiu:'✅ MARCAR ENTREGUE'};
+    const [tempoModal, setTempoModal] = useState(null); // {deliveryId, tempo}
     
     const advanceStatus = (d) => {
         const next = nextStatus[d.status];
         if (!next) return;
+        
+        // Se vai para 'saiu', pedir tempo estimado
+        if (next === 'saiu') {
+            setTempoModal({id: d.id, tempo: 30});
+            return;
+        }
+        
         db.ref(`deliveries/${d.id}/status`).set(next);
         if (next === 'entregue') {
             // Salvar como venda delivery
@@ -4135,6 +4207,23 @@ function DeliveryTab({deliveries, products, config, onNew}) {
             db.ref(`sales/${sale.id}`).set(sale);
             db.ref(`deliveries/${d.id}/closedAt`).set(Date.now());
         }
+    };
+    
+    const confirmarSaiu = () => {
+        if (!tempoModal) return;
+        const horaSaida = Date.now();
+        const tempoMinutos = parseInt(tempoModal.tempo) || 30;
+        const horaChegada = horaSaida + (tempoMinutos * 60000);
+        
+        db.ref(`deliveries/${tempoModal.id}`).update({
+            status: 'saiu',
+            horaSaida,
+            tempoEstimado: tempoMinutos,
+            horaChegadaEstimada: horaChegada
+        });
+        playSound('delivery');
+        alert(`🛵 Entrega saiu!\nTempo estimado: ${tempoMinutos} minutos`);
+        setTempoModal(null);
     };
     
     const cancelDelivery = (d) => {
@@ -4265,6 +4354,45 @@ function DeliveryTab({deliveries, products, config, onNew}) {
                     </div>
                 ))}
             </div>
+            
+            {/* Modal - Tempo Estimado */}
+            {tempoModal && (
+                <div onClick={()=>setTempoModal(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'1rem'}}>
+                    <div onClick={e=>e.stopPropagation()} style={{background:'var(--surface)',borderRadius:'20px',maxWidth:'380px',width:'100%',border:'3px solid #3498db',padding:'2rem'}}>
+                        <h3 style={{color:'#3498db',fontSize:'1.5rem',fontWeight:'900',marginBottom:'1.5rem',textAlign:'center'}}>🛵 Tempo de Entrega</h3>
+                        <p style={{color:'var(--text-secondary)',marginBottom:'1.5rem',textAlign:'center'}}>Em quantos minutos a entrega chegará?</p>
+                        
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'0.8rem',marginBottom:'2rem'}}>
+                            {[15,20,30].map(t=>(
+                                <button key={t} onClick={()=>setTempoModal({...tempoModal,tempo:t})} style={{
+                                    padding:'1rem',
+                                    background: tempoModal.tempo===t ? '#3498db' : 'var(--background)',
+                                    border:`2px solid ${tempoModal.tempo===t ? '#3498db' : 'var(--border)'}`,
+                                    borderRadius:'10px',color: tempoModal.tempo===t ? '#fff' : 'var(--text)',
+                                    fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'
+                                }}>{t}′</button>
+                            ))}
+                        </div>
+
+                        <div style={{display:'grid',gap:'1rem',gridTemplateColumns:'1fr'}}>
+                            <div style={{background:'var(--background)',borderRadius:'10px',padding:'1rem',textAlign:'center',fontWeight:'700',color:'var(--text-secondary)'}}>
+                                Tempo selecionado: <span style={{color:'#3498db',fontSize:'1.3rem'}}>{tempoModal.tempo}′</span>
+                            </div>
+                        </div>
+
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'1rem',marginTop:'1.5rem'}}>
+                            <button onClick={()=>setTempoModal(null)} style={{
+                                padding:'1rem',background:'var(--background)',border:'2px solid var(--border)',
+                                borderRadius:'10px',color:'var(--text)',fontWeight:'800',cursor:'pointer'
+                            }}>CANCELAR</button>
+                            <button onClick={confirmarSaiu} style={{
+                                padding:'1rem',background:'linear-gradient(135deg,#3498db,#2980b9)',border:'none',
+                                borderRadius:'10px',color:'#fff',fontWeight:'900',cursor:'pointer',fontSize:'1rem'
+                            }}>✅ CONFIRMAR</button>
+                        </div>
+                    </div>
+                </div>
+            )}
             
             {/* Histórico */}
             {done.length > 0 && (
