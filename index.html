@@ -779,7 +779,11 @@ function DeliveryPublico({config, theme, toggleTheme}) {
                         {/* Botão RECEBIDO quando saiu */}
                         {pedidoStatus === 'saiu' && (
                             <button onClick={() => {
-                                db.ref(`deliveries/${pedidoId}/status`).set('entregue');
+                                // Atualizar no delivery
+                                db.ref(`deliveries/${pedidoId}`).update({
+                                    status: 'entregue',
+                                    closedAt: Date.now()
+                                });
                                 playSound('fechamento');
                             }} style={{
                                 width:'100%',padding:'1.2rem',marginBottom:'1rem',
@@ -899,6 +903,18 @@ function DeliveryPublico({config, theme, toggleTheme}) {
                                         ✅ Troco: {config.currency} {(trocoVal - total).toFixed(2)}
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {/* QR Code PIX */}
+                        {form.pagamento === 'pix' && config.pixQrCode && (
+                            <div style={{textAlign:'center',padding:'1.5rem',background:'var(--background)',borderRadius:'12px',border:'2px solid #9b59b6'}}>
+                                <div style={{fontSize:'2rem',marginBottom:'0.5rem'}}>💠</div>
+                                <p style={{color:'var(--text-secondary)',fontSize:'0.85rem',marginBottom:'1rem'}}>Escaneie o código ou use a chave:</p>
+                                <div style={{background:'#fff',padding:'1rem',borderRadius:'10px',display:'inline-block',marginBottom:'1rem'}}>
+                                    <img src={config.pixQrCode} alt="PIX QR Code" style={{width:'150px',height:'150px',objectFit:'contain'}} />
+                                </div>
+                                <p style={{color:'#9b59b6',fontWeight:'700',fontSize:'0.9rem'}}>Após escanear, conclua o pagamento</p>
                             </div>
                         )}
 
@@ -1877,6 +1893,20 @@ function ConfigTab({config}) {
                     <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>PIN Master</label>
                     <PasswordInput value={d.masterPin} onChange={e => setD({...d, masterPin: e.target.value})} maxLength={4} style={{width:'100%',padding:'1rem',background:'#1a1a1a',border:'1px solid #333',borderRadius:'10px',color:'#fff',fontSize:'1.5rem',textAlign:'center'}} />
                 </div>
+
+                {/* QR Code PIX */}
+                <div>
+                    <label style={{display:'block',color:'#888',marginBottom:'0.5rem',fontWeight:'700'}}>💠 QR Code PIX (opcional)</label>
+                    <p style={{color:'#888',fontSize:'0.85rem',marginBottom:'1rem'}}>Cole aqui o QR Code do PIX em base64 ou URL da imagem para aparecer quando cliente escolher pagar com PIX</p>
+                    {d.pixQrCode ? (
+                        <div style={{background:'#1a1a1a',border:'2px solid #9b59b6',borderRadius:'10px',padding:'1.5rem',textAlign:'center',marginBottom:'1rem'}}>
+                            <img src={d.pixQrCode} alt="PIX QR" style={{maxWidth:'200px',height:'200px',marginBottom:'1rem',borderRadius:'10px'}} />
+                            <button onClick={() => setD({...d, pixQrCode: null})} style={{width:'100%',padding:'0.8rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.9rem'}}>🗑️ REMOVER QR CODE</button>
+                        </div>
+                    ) : null}
+                    <textarea value={d.pixQrCode || ''} onChange={e => setD({...d, pixQrCode: e.target.value})} placeholder="Cole a URL ou base64 do QR Code PIX aqui..." rows={4} style={{width:'100%',padding:'1rem',background:'#1a1a1a',border:'1px solid #333',borderRadius:'10px',color:'#fff',fontFamily:'monospace',fontSize:'0.85rem',resize:'vertical'}} />
+                </div>
+
                 <button onClick={save} style={{padding:'1.2rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'1.1rem'}}>💾 SALVAR</button>
                 
                 {/* BOTÃO LIMPAR DADOS */}
