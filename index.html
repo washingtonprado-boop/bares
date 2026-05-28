@@ -608,7 +608,8 @@ function DeliveryPublico({config, theme, toggleTheme}) {
     const [step, setStep]           = useState(1); // 1=cardápio, 2=dados, 3=confirmado
     const [catFilter, setCatFilter] = useState('Todos');
     const [pedidoId, setPedidoId]   = useState(null);
-    const [pedidoStatus, setPedidoStatus] = useState(null);
+    const [pedidoStatus, setPedidoStatus] = useState('pendente');
+    const [pedidoData, setPedidoData] = useState(null);
     const [form, setForm] = useState({
         nome:'', telefone:'', endereco:'', referencia:'', pagamento:'dinheiro', troco:'', taxa:''
     });
@@ -623,8 +624,13 @@ function DeliveryPublico({config, theme, toggleTheme}) {
     // Rastrear pedido em tempo real
     useEffect(() => {
         if (!pedidoId) return;
-        const ref = db.ref(`deliveries/${pedidoId}/status`);
-        ref.on('value', s => { if (s.val()) setPedidoStatus(s.val()); });
+        const ref = db.ref(`deliveries/${pedidoId}`);
+        ref.on('value', s => { 
+            if (s.val()) {
+                setPedidoStatus(s.val().status || 'pendente');
+                setPedidoData(s.val());
+            }
+        });
         return () => ref.off();
     }, [pedidoId]);
 
@@ -670,6 +676,7 @@ function DeliveryPublico({config, theme, toggleTheme}) {
 
         db.ref(`deliveries/${id}`).set(delivery).then(() => {
             setPedidoId(id);
+            setPedidoStatus('pendente'); // ← Inicializar status
             setStep(3);
         });
     };
@@ -688,14 +695,6 @@ function DeliveryPublico({config, theme, toggleTheme}) {
         
         // Calcular tempo restante se saiu
         let tempoRestante = null;
-        const [pedidoData, setPedidoData] = useState(null);
-        
-        useEffect(() => {
-            db.ref(`deliveries/${pedidoId}`).once('value').then(snap => {
-                if (snap.val()) setPedidoData(snap.val());
-            });
-        }, [pedidoId]);
-        
         if (pedidoData && pedidoData.horaChegadaEstimada) {
             const agora = Date.now();
             const minutos = Math.max(0, Math.round((pedidoData.horaChegadaEstimada - agora) / 60000));
