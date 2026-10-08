@@ -385,7 +385,7 @@ const INITIAL_PRODUCTS = [
     {id: 1, name: 'Cerveja', price: 12, image: '🍺', category: 'Bebidas', active: true},
     {id: 2, name: 'Caipirinha', price: 15, image: '🍹', category: 'Bebidas', active: true},
     {id: 3, name: 'Batata Frita', price: 28, image: '🍟', category: 'Comidas', active: true},
-    {id: 4, name: 'Espetinho', price: 8, image: ' 串', category: 'Comidas', active: true},
+    {id: 4, name: 'Espetinho', price: 8, image: '�串', category: 'Comidas', active: true},
     {id: 5, name: 'Caldo', price: 12, image: '🍲', category: 'Comidas', active: true},
     {id: 6, name: 'Caldeirão', price: 45, image: '🥘', category: 'Comidas', active: true},
     {id: 7, name: 'Açaí', price: 18, image: '🍇', category: 'Sobremesas', active: true},
@@ -465,6 +465,8 @@ function App() {
         db.ref('sales').on('value', s => {
             if (s.val()) {
                 setSales(Object.values(s.val()).sort((a, b) => b.timestamp - a.timestamp));
+            } else {
+                setSales([]);
             }
         });
         
@@ -1162,13 +1164,13 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
     const go = () => {
         // Validar baseado no tipo selecionado
         if (mode === 'master') {
-            if (pin === '0000') {setUser({name:'Master',role:'master'}); setView('master');}
+            if (pin === (config.masterPin || '0000')) {setUser({name:'Master',role:'master'}); setView('master');}
             else alert('❌ PIN de Master incorreto!');
         } else if (mode === 'admin') {
-            if (pin === '9999') {setUser({name:'Admin',role:'admin'}); setView('admin');}
+            if (pin === (config.adminPin || '9999')) {setUser({name:'Admin',role:'admin'}); setView('admin');}
             else alert('❌ PIN de Admin incorreto!');
         } else if (mode === 'balcao') {
-            if (pin === '8888') {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
+            if (pin === (config.balcaoPin || '8888')) {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
             else alert('❌ PIN de Balcão incorreto!');
         } else if (mode === 'garcom') {
             if (!nome.trim()) { alert('❌ Informe seu nome!'); return; }
@@ -2856,7 +2858,7 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
         if (totalWithTip > 0) {
             // Salvar venda no histórico
             const sale = {
-                id: Date.now(),
+                id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
                 tableId: id,
                 waiter: table.waiter || null,
                 waiterName: table.waiter ? waiters.find(w => w.id === table.waiter)?.name || 'Sem garçom' : 'Cliente direto',
@@ -2932,10 +2934,11 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
     const confirmOrder = (id, idx) => {
         const t = tables.find(x => x.id === id);
         const o = t.pending[idx];
-        const newO = [...t.orders, o];
+        if (!o) { alert('❌ Pedido não encontrado!'); return; }
+        const newO = [...(t.orders || []), {...o, confirmedAt: Date.now()}];
         const newP = t.pending.filter((_, i) => i !== idx);
-        const newS = t.subtotal + (o.price * o.quantity);
-        const newT = newS + (newS * config.serviceCharge / 100);
+        const newS = (t.subtotal || 0) + (o.price * o.quantity);
+        const newT = newS; // sem taxa de serviço (igual ao Balcão)
         db.ref(`tables/${id}`).update({orders: newO, pending: newP, subtotal: newS, total: newT});
         alert('Confirmado!');
     };
@@ -3436,7 +3439,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
         // Salvar venda no histórico
         if (totalWithTip > 0) {
             const sale = {
-                id: Date.now(),
+                id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
                 tableId: tableId,
                 waiter: t.waiter || null,
                 waiterName: t.waiter ? waiters.find(w => w.id === t.waiter)?.name || 'Sem garçom' : 'Cliente direto',
@@ -4258,7 +4261,7 @@ function DeliveryTab({deliveries, products, config, onNew}) {
         if (next === 'entregue') {
             // Salvar como venda delivery
             const sale = {
-                id: Date.now(),
+                id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
                 type: 'delivery',
                 tableId: null,
                 waiter: null,
@@ -4969,11 +4972,12 @@ function CardapioQRTab({products, config}) {
     const grouped = products.filter(p=>p.active).reduce((a,p)=>{ if(!a[p.category])a[p.category]=[]; a[p.category].push(p); return a; },{});
 
     const printCardapio = () => {
+        const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         const w = window.open('', '_blank');
         const items = products.filter(p=>p.active);
         const cats = [...new Set(items.map(p=>p.category))];
         w.document.write(`
-            <html><head><title>Cardápio - ${config.barName}</title>
+            <html><head><title>Cardápio - ${esc(config.barName)}</title>
             <meta charset="UTF-8">
             <style>
                 body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:2rem;background:#fff;color:#000}
@@ -4986,14 +4990,14 @@ function CardapioQRTab({products, config}) {
                 @media print{body{padding:1rem}}
             </style></head><body>
             ${config.logo ? `<div style="text-align:center;margin-bottom:1rem"><img src="${config.logo}" style="max-width:200px;max-height:150px"></div>` : ''}
-            <h1>${config.barName}</h1>
+            <h1>${esc(config.barName)}</h1>
             ${cats.map(cat=>`
-                <h2>${cat}</h2>
+                <h2>${esc(cat)}</h2>
                 ${items.filter(p=>p.category===cat).map(p=>`
                     <div class="item">
                         <div style="display:flex;align-items:center">
-                            <span class="emoji">${p.imageType==='upload'?'🍽️':p.image}</span>
-                            <span class="nome">${p.name}</span>
+                            <span class="emoji">${p.imageType==='upload'?'🍽️':esc(p.image)}</span>
+                            <span class="nome">${esc(p.name)}</span>
                         </div>
                         <span class="preco">${config.currency} ${parseFloat(p.price).toFixed(2)}</span>
                     </div>
@@ -5277,11 +5281,7 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
         }));
         
         const pendingRef = db.ref(`tables/${orderingFor.id}/pending`);
-        pendingRef.once('value').then(snapshot => {
-            const currentPending = snapshot.val() || [];
-            const updatedPending = [...currentPending, ...newItems];
-            pendingRef.set(updatedPending);
-        });
+        pendingRef.transaction(current => [...(current || []), ...newItems]);
         
         setCart([]);
         setOrderingFor(null);
@@ -5795,11 +5795,7 @@ function Customer({tables, products, config, waiters, setView, theme, toggleThem
         
         // Adicionar cada item individualmente
         const pendingRef = db.ref(`tables/${tableId}/pending`);
-        pendingRef.once('value').then(snapshot => {
-            const currentPending = snapshot.val() || [];
-            const updatedPending = [...currentPending, ...newItems];
-            pendingRef.set(updatedPending);
-        });
+        pendingRef.transaction(current => [...(current || []), ...newItems]);
         
         setCart([]);
         setShow(false);
