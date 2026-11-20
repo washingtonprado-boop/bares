@@ -385,7 +385,7 @@ const INITIAL_PRODUCTS = [
     {id: 1, name: 'Cerveja', price: 12, image: '🍺', category: 'Bebidas', active: true},
     {id: 2, name: 'Caipirinha', price: 15, image: '🍹', category: 'Bebidas', active: true},
     {id: 3, name: 'Batata Frita', price: 28, image: '🍟', category: 'Comidas', active: true},
-    {id: 4, name: 'Espetinho', price: 8, image: '�串', category: 'Comidas', active: true},
+    {id: 4, name: 'Espetinho', price: 8, image: '🍢', category: 'Comidas', active: true},
     {id: 5, name: 'Caldo', price: 12, image: '🍲', category: 'Comidas', active: true},
     {id: 6, name: 'Caldeirão', price: 45, image: '🥘', category: 'Comidas', active: true},
     {id: 7, name: 'Açaí', price: 18, image: '🍇', category: 'Sobremesas', active: true},
@@ -448,17 +448,30 @@ function App() {
     useEffect(() => {
         if (!db) {setLoading(false); return;}
         
+        // Semeia dados padrão somente na 1ª vez (evita recriar PINs/produtos padrão após apagar tudo)
+        const seedOnce = (node, data) => {
+            db.ref('meta/seeded/' + node).once('value').then(f => {
+                if (f.val() === true) return;
+                db.ref(node).once('value').then(cur => {
+                    if (cur.val() === null || cur.val() === undefined) db.ref(node).set(data);
+                    db.ref('meta/seeded/' + node).set(true);
+                });
+            });
+        };
+        const markSeeded = (node) => { db.ref('meta/seeded/' + node).set(true); };
+        
         db.ref('config').on('value', s => {
-            if (s.val()) setConfig(s.val());
-            else db.ref('config').set(INITIAL_CONFIG);
+            if (s.val()) { setConfig(s.val()); markSeeded('config'); }
+            else seedOnce('config', INITIAL_CONFIG);
         });
         
         db.ref('products').on('value', s => {
-            if (s.val()) setProducts(Object.keys(s.val()).map(k => ({...s.val()[k], id: k})));
+            if (s.val()) { setProducts(Object.keys(s.val()).map(k => ({...s.val()[k], id: k}))); markSeeded('products'); }
             else {
+                setProducts([]);
                 const obj = {};
                 INITIAL_PRODUCTS.forEach(p => obj[p.id] = p);
-                db.ref('products').set(obj);
+                seedOnce('products', obj);
             }
         });
         
@@ -471,11 +484,12 @@ function App() {
         });
         
         db.ref('waiters').on('value', s => {
-            if (s.val()) setWaiters(Object.values(s.val()));
+            if (s.val()) { setWaiters(Object.values(s.val())); markSeeded('waiters'); }
             else {
+                setWaiters([]);
                 const obj = {};
                 INITIAL_WAITERS.forEach(w => obj[w.id] = w);
-                db.ref('waiters').set(obj);
+                seedOnce('waiters', obj);
             }
         });
         
@@ -486,7 +500,7 @@ function App() {
                     newT.forEach(nt => {
                         const ot = prevTables.current.find(t => t.id === nt.id);
                         // Novo pedido pendente
-                        if (ot && nt.pending && ot.pending && nt.pending.length > ot.pending.length) {
+                        if (ot && (nt.pending || []).length > (ot.pending || []).length) {
                             playSound('pedido');
                         }
                         // Chamada de garçom
@@ -501,6 +515,7 @@ function App() {
                 }
                 prevTables.current = newT;
                 setTables(newT);
+                markSeeded('tables');
             } else {
                 const obj = {};
                 for (let i = 1; i <= INITIAL_CONFIG.tables; i++) {
@@ -518,7 +533,7 @@ function App() {
                         callWaiter: false
                     };
                 }
-                db.ref('tables').set(obj);
+                seedOnce('tables', obj);
             }
         });
         
@@ -531,7 +546,7 @@ function App() {
     useEffect(() => {
         // Som de novo delivery
         const refD = db.ref('deliveries');
-        refD.on('value', s => {
+        const cbD = refD.on('value', s => {
             if (s.val()) {
                 const list = Object.values(s.val());
                 if (prevDeliveries.current.length > 0 && list.length > prevDeliveries.current.length) {
@@ -542,7 +557,7 @@ function App() {
         });
         // Som de nova reserva
         const refR = db.ref('reservas');
-        refR.on('value', s => {
+        const cbR = refR.on('value', s => {
             if (s.val()) {
                 const list = Object.values(s.val());
                 if (prevReservas.current.length > 0 && list.length > prevReservas.current.length) {
@@ -551,7 +566,7 @@ function App() {
                 prevReservas.current = list;
             }
         });
-        return () => { refD.off(); refR.off(); };
+        return () => { refD.off('value', cbD); refR.off('value', cbR); };
     }, []);
 
     if (loading) return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}><h2 style={{color:'#d4a574'}}>Carregando...</h2></div>;
@@ -604,6 +619,82 @@ function ThemeToggle({theme, toggleTheme, style = {}}) {
 }
 
 // ─── Delivery Público (acesso via link, sem login) ───────────
+// Operações de pedidos feitas em TRANSAÇÃO sobre a mesa (evita sobrescrever pedidos que chegam ao mesmo tempo)
+function mesaPendentesTx(tableId, action, target) {
+    // action: 'confirm' | 'cancel'; target: 'all' | {orderId, idx}
+    let afetados = 0;
+    return db.ref(`tables/${tableId}`).transaction(cur => {
+        afetados = 0;
+        if (!cur) return cur;
+        const pend = Array.isArray(cur.pending) ? cur.pending : Object.values(cur.pending || {});
+        if (pend.length === 0) return; // aborta
+        let sel = [];
+        if (target === 'all') sel = pend.map((_, i) => i);
+        else {
+            let i = target.orderId ? pend.findIndex(x => x && x.orderId === target.orderId) : target.idx;
+            if (i < 0 || !pend[i]) return; // pedido já foi tratado por outra pessoa
+            sel = [i];
+        }
+        const escolhidos = sel.map(i => pend[i]);
+        const resto = pend.filter((_, i) => !sel.includes(i));
+        afetados = escolhidos.length;
+        if (action === 'confirm') {
+            const soma = escolhidos.reduce((t, o) => t + (parseFloat(o.price) || 0) * (parseInt(o.quantity) || 0), 0);
+            const sub = Math.round(((parseFloat(cur.subtotal) || 0) + soma) * 100) / 100;
+            const agora = Date.now();
+            cur.orders = [...(Array.isArray(cur.orders) ? cur.orders : Object.values(cur.orders || {})), ...escolhidos.map(o => ({...o, confirmedAt: agora}))];
+            cur.subtotal = sub;
+            cur.total = sub;
+        }
+        cur.pending = resto;
+        return cur;
+    }).then(r => ({committed: r.committed && afetados > 0, afetados}));
+}
+
+
+// Data local (YYYY-MM-DD) — evita virar "amanhã" depois das 21h por causa do UTC
+function hojeLocal() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Baixa um backup JSON dos dados principais (usado antes de apagar dados)
+function baixarBackup() {
+    return Promise.all(['sales', 'tables', 'deliveries', 'reservas'].map(n => db.ref(n).once('value').then(x => [n, x.val()])))
+        .then(pares => {
+            const obj = {geradoEm: new Date().toISOString()};
+            pares.forEach(([n, v]) => obj[n] = v);
+            const blob = new Blob([JSON.stringify(obj, null, 2)], {type: 'application/json'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'backup-bar-' + hojeLocal() + '.json';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        });
+}
+
+// Monta a venda de um delivery (id fixo => nunca duplica, mesmo se chamada 2x)
+function montarVendaDelivery(d) {
+    return {
+        id: `delivery_${d.id}`,
+        type: 'delivery',
+        tableId: null,
+        waiter: null,
+        waiterName: 'Delivery',
+        customerName: d.customerName || d.nome || 'Cliente',
+        customerPhone: d.phone || d.telefone || null,
+        address: d.address || d.endereco || null,
+        subtotal: d.subtotal || 0,
+        deliveryFee: d.deliveryFee || 0,
+        tip: 0,
+        total: d.total || 0,
+        payment: d.payment || null,
+        troco: d.troco || null,
+        orders: d.items || [],
+        date: new Date().toISOString(),
+        timestamp: Date.now()
+    };
+}
+
 function DeliveryPublico({config, theme, toggleTheme}) {
     const [products, setProducts]   = useState([]);
     const [cart, setCart]           = useState([]);
@@ -617,23 +708,23 @@ function DeliveryPublico({config, theme, toggleTheme}) {
     });
 
     useEffect(() => {
-        db.ref('products').on('value', s => {
+        const cb = db.ref('products').on('value', s => {
             if (s.val()) setProducts(Object.values(s.val()).filter(p => p.active));
         });
-        return () => db.ref('products').off();
+        return () => db.ref('products').off('value', cb);
     }, []);
 
     // Rastrear pedido em tempo real
     useEffect(() => {
         if (!pedidoId) return;
         const ref = db.ref(`deliveries/${pedidoId}`);
-        ref.on('value', s => { 
+        const cb = ref.on('value', s => { 
             if (s.val()) {
                 setPedidoStatus(s.val().status || 'pendente');
                 setPedidoData(s.val());
             }
         });
-        return () => ref.off();
+        return () => ref.off('value', cb);
     }, [pedidoId]);
 
     const categories = ['Todos', ...new Set(products.map(p => p.category))];
@@ -782,9 +873,15 @@ function DeliveryPublico({config, theme, toggleTheme}) {
                         {pedidoStatus === 'saiu' && (
                             <button onClick={() => {
                                 // Atualizar no delivery
-                                db.ref(`deliveries/${pedidoId}`).update({
-                                    status: 'entregue',
-                                    closedAt: Date.now()
+                                db.ref(`deliveries/${pedidoId}`).once('value').then(snap => {
+                                    const d = snap.val();
+                                    if (!d || d.status === 'entregue') return;
+                                    const venda = montarVendaDelivery({...d, id: pedidoId});
+                                    db.ref().update({
+                                        [`deliveries/${pedidoId}/status`]: 'entregue',
+                                        [`deliveries/${pedidoId}/closedAt`]: Date.now(),
+                                        [`sales/${venda.id}`]: venda
+                                    });
                                 });
                                 playSound('fechamento');
                             }} style={{
@@ -1045,10 +1142,10 @@ function CardapioPublico({config, tables, setUser, setView, theme, toggleTheme})
     const [catFilter, setCatFilter] = useState('Todos');
 
     useEffect(() => {
-        db.ref('products').on('value', s => {
+        const cb = db.ref('products').on('value', s => {
             if (s.val()) setProducts(Object.values(s.val()).filter(p=>p.active));
         });
-        return () => db.ref('products').off();
+        return () => db.ref('products').off('value', cb);
     }, []);
 
     const categories = ['Todos', ...new Set(products.map(p=>p.category))];
@@ -1163,15 +1260,26 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
     
     const go = () => {
         // Validar baseado no tipo selecionado
-        if (mode === 'master') {
-            if (pin === (config.masterPin || '0000')) {setUser({name:'Master',role:'master'}); setView('master');}
-            else alert('❌ PIN de Master incorreto!');
-        } else if (mode === 'admin') {
-            if (pin === (config.adminPin || '9999')) {setUser({name:'Admin',role:'admin'}); setView('admin');}
-            else alert('❌ PIN de Admin incorreto!');
-        } else if (mode === 'balcao') {
-            if (pin === (config.balcaoPin || '8888')) {setUser({name:'Balcão',role:'balcao'}); setView('balcao');}
-            else alert('❌ PIN de Balcão incorreto!');
+        if (mode === 'master' || mode === 'admin' || mode === 'balcao') {
+            const cfgPins = {master: config.masterPin || '0000', admin: config.adminPin || '9999', balcao: config.balcaoPin || '8888'};
+            const labels = {master: 'Master', admin: 'Admin', balcao: 'Balcão'};
+            const entrar = (nm) => {setUser({name: nm || labels[mode], role: mode}); setView(mode);};
+            // PIN de config sempre vale para Master (evita ficar sem acesso)
+            if (mode === 'master' && pin === cfgPins.master) { entrar(); return; }
+            db.ref('users').once('value').then(snapshot => {
+                const list = Object.values(snapshot.val() || {}).filter(u => u.role === mode && u.active);
+                if (list.length > 0) {
+                    // Se existem usuários cadastrados para o perfil, eles governam o acesso (PIN alterado em USUÁRIOS passa a valer)
+                    const u = list.find(x => x.pin === pin);
+                    if (u) entrar(u.name); else alert('❌ PIN de ' + labels[mode] + ' incorreto!');
+                } else if (pin === cfgPins[mode]) {
+                    entrar();
+                } else {
+                    alert('❌ PIN de ' + labels[mode] + ' incorreto!');
+                }
+            }).catch(() => {
+                if (pin === cfgPins[mode]) entrar(); else alert('❌ PIN de ' + labels[mode] + ' incorreto!');
+            });
         } else if (mode === 'garcom') {
             if (!nome.trim()) { alert('❌ Informe seu nome!'); return; }
             const w = waiters.find(x => x.pin === pin && x.active);
@@ -1190,9 +1298,10 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
                                 setUser({name:user.name, role:'waiter', waiterId:waiter.id});
                                 setView('waiter');
                             } else {
-                                setUser({name:user.name, role:user.role});
-                                setView(user.role);
+                                alert('❌ Este usuário Garçom não está cadastrado na aba GARÇONS com o mesmo PIN.');
                             }
+                        } else if (!['master','admin','balcao'].includes(user.role)) {
+                            alert('⚠️ O perfil "' + user.role + '" ainda não possui tela de acesso.');
                         } else {
                             setUser({name:user.name, role:user.role});
                             setView(user.role);
@@ -1312,18 +1421,18 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
                 }}>
                     <button 
                         onClick={() => {setMode('staff');setAsk(false);}} 
-                        className={mode==='staff' ? 'btn-primary' : ''}
+                        className={['staff','master','admin','balcao','garcom'].includes(mode) ? 'btn-primary' : ''}
                         style={{
                             padding:'1rem',
-                            background:mode==='staff' ? 'linear-gradient(135deg, var(--primary), var(--primary-dark))' : 'transparent',
+                            background:['staff','master','admin','balcao','garcom'].includes(mode) ? 'linear-gradient(135deg, var(--primary), var(--primary-dark))' : 'transparent',
                             border:'none',
                             borderRadius:'10px',
-                            color:mode==='staff' ? '#000' : 'var(--text-secondary)',
+                            color:['staff','master','admin','balcao','garcom'].includes(mode) ? '#000' : 'var(--text-secondary)',
                             fontWeight:'700',
                             fontSize:'0.95rem',
                             cursor:'pointer',
                             transition:'all 0.3s ease',
-                            boxShadow: mode==='staff' ? '0 4px 15px rgba(212,165,116,0.3)' : 'none'
+                            boxShadow: ['staff','master','admin','balcao','garcom'].includes(mode) ? '0 4px 15px rgba(212,165,116,0.3)' : 'none'
                         }}
                     >
                         👑 EQUIPE
@@ -1348,7 +1457,7 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
                     </button>
                 </div>
                 
-                {mode === 'staff' && !ask && (
+                {['staff','master','admin','balcao','garcom'].includes(mode) && (!ask || mode === 'garcom') && (
                     <div className="slide-in">
                         {/* Seleção de Tipo de Usuário */}
                         <div style={{marginBottom:'1.5rem'}}>
@@ -1597,6 +1706,15 @@ function Master({config, products, waiters, tables, sales, setView, theme, toggl
             const configCount = parseInt(config.tables);
             
             if (currentCount !== configCount) {
+                // Bloqueia redução se houver mesas ocupadas/com pedidos acima do novo limite
+                if (configCount < currentCount) {
+                    const emUso = tables.filter(t => t.id > configCount && (t.status !== 'livre' || (t.orders && t.orders.length) || (t.pending && t.pending.length) || (parseFloat(t.total) || 0) > 0));
+                    if (emUso.length > 0) {
+                        alert('❌ Não é possível reduzir o número de mesas: as mesas ' + emUso.map(t => t.id).join(', ') + ' estão em uso. Feche as contas antes.');
+                        db.ref('config/tables').set(currentCount);
+                        return;
+                    }
+                }
                 const obj = {};
                 
                 // Preservar mesas existentes
@@ -1780,7 +1898,7 @@ function Master({config, products, waiters, tables, sales, setView, theme, toggl
                                         <div key={i} style={{background:'#0a0a0a',padding:'1.5rem',borderRadius:'12px',marginBottom:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                                             <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
                                                 <div style={{background:'#d4a574',color:'#000',width:'35px',height:'35px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'900'}}>{i+1}</div>
-                                                <div style={{fontSize:'2.5rem'}}>{product.image}</div>
+                                                <div style={{fontSize:'2.5rem'}}><IconVal v={product.image} /></div>
                                                 <div>
                                                     <div style={{fontWeight:'800',fontSize:'1.2rem'}}>{product.name}</div>
                                                     <div style={{color:'#888'}}>{product.quantity} vendidos</div>
@@ -1921,6 +2039,9 @@ function ConfigTab({config}) {
                             
                             if (!confirm('🚨 ÚLTIMA CONFIRMAÇÃO!\n\nTem CERTEZA que deseja limpar TODOS os dados de vendas?\n\nEsta ação NÃO pode ser desfeita!')) return;
                             
+                            // Baixa backup automático antes de apagar
+                            baixarBackup().then(() => true).catch(() => confirm('⚠️ Não foi possível gerar o backup. Apagar mesmo assim?')).then(ok => {
+                            if (!ok) return;
                             // Limpar vendas
                             db.ref('sales').remove();
                             
@@ -1942,6 +2063,7 @@ function ConfigTab({config}) {
                             db.ref('tables').set(resetTables);
                             
                             alert('✅ Dados limpos com sucesso!\n\n• Vendas apagadas\n• Mesas resetadas\n\nSistema pronto para começar!');
+                            });
                         }}
                         style={{
                             width:'100%',
@@ -2201,6 +2323,13 @@ function UsersTab({config, waiters, onAdd, onEdit}) {
 }
 
 // Componente para renderizar ícone/imagem do produto
+function IconVal({v}) {
+    if (typeof v === 'string' && (v.startsWith('data:') || v.startsWith('http'))) {
+        return <img src={v} alt="" style={{width:'1.2em',height:'1.2em',objectFit:'cover',borderRadius:'6px',verticalAlign:'middle'}} />;
+    }
+    return <>{v}</>;
+}
+
 function ProductIcon({product, size = '3rem', style = {}}) {
     if (product.imageType === 'upload' && product.image && product.image.startsWith('data:')) {
         return (
@@ -2381,6 +2510,7 @@ function ProductModal({edit, config, onClose}) {
                     <select value={d.category} onChange={e => setD({...d, category: e.target.value})} style={{padding:'1rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}}>
                         <option>Bebidas</option>
                         <option>Comidas</option>
+                        {d.category && d.category !== 'Bebidas' && d.category !== 'Comidas' && <option>{d.category}</option>}
                     </select>
                     
                     <div>
@@ -2501,7 +2631,7 @@ function ProductModal({edit, config, onClose}) {
                                     maxHeight:'200px',
                                     overflowY:'auto'
                                 }}>
-                                    {emojis[d.category].map((emoji, i) => (
+                                    {(emojis[d.category] || emojis['Comidas']).map((emoji, i) => (
                                         <button
                                             key={i}
                                             onClick={() => {
@@ -2823,15 +2953,15 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
                 );
                 
                 if (choice === '1') {
-                    tip = total * 0.10;
+                    tip = Math.round(total * 0.10 * 100) / 100;
                 } else if (choice === '2') {
-                    tip = total * 0.15;
+                    tip = Math.round(total * 0.15 * 100) / 100;
                 } else if (choice === '3') {
-                    tip = total * 0.20;
+                    tip = Math.round(total * 0.20 * 100) / 100;
                 } else if (choice === '4') {
                     const customTip = parseFloat(prompt('Digite o valor da gorjeta:'));
                     if (customTip && customTip > 0) {
-                        tip = customTip;
+                        tip = Math.round(customTip * 100) / 100;
                     }
                 }
                 
@@ -2842,7 +2972,7 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
             }
         }
         
-        const totalWithTip = total + tip;
+        const totalWithTip = Math.round((total + tip) * 100) / 100;
         
         // Confirmar fechamento
         let confirmMsg = `Fechar conta da Mesa ${id}?\n\nSubtotal: ${config.currency} ${subtotal.toFixed(2)}`;
@@ -2855,6 +2985,7 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
             return;
         }
         
+        const updates = {};
         if (totalWithTip > 0) {
             // Salvar venda no histórico
             const sale = {
@@ -2871,14 +3002,11 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
                 timestamp: Date.now()
             };
             
-            db.ref(`sales/${sale.id}`).set(sale).catch(error => {
-                console.error('Erro ao salvar venda:', error);
-                alert('⚠️ Aviso: Erro ao salvar no histórico, mas a mesa será fechada.');
-            });
+            updates[`sales/${sale.id}`] = sale;
         }
         
-        // Resetar mesa
-        db.ref(`tables/${id}`).set({
+        // Resetar mesa (venda + reset em uma única operação atômica)
+        updates[`tables/${id}`] = {
             id: id,
             status: 'livre',
             waiter: null,
@@ -2890,7 +3018,8 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
             orders: [],
             pending: [],
             callWaiter: false
-        }).then(() => {
+        };
+        db.ref().update(updates).then(() => {
             alert('✅ Mesa fechada com sucesso!');
         }).catch(error => {
             console.error('Erro ao fechar mesa:', error);
@@ -2933,14 +3062,12 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
     
     const confirmOrder = (id, idx) => {
         const t = tables.find(x => x.id === id);
-        const o = t.pending[idx];
+        const o = t && t.pending ? t.pending[idx] : null;
         if (!o) { alert('❌ Pedido não encontrado!'); return; }
-        const newO = [...(t.orders || []), {...o, confirmedAt: Date.now()}];
-        const newP = t.pending.filter((_, i) => i !== idx);
-        const newS = (t.subtotal || 0) + (o.price * o.quantity);
-        const newT = newS; // sem taxa de serviço (igual ao Balcão)
-        db.ref(`tables/${id}`).update({orders: newO, pending: newP, subtotal: newS, total: newT});
-        alert('Confirmado!');
+        mesaPendentesTx(id, 'confirm', {orderId: o.orderId, idx}).then(r => {
+            if (!r.committed) { alert('⚠️ Este pedido já foi tratado por outra pessoa.'); return; }
+            alert('Confirmado!');
+        });
     };
     
     return (
@@ -3088,7 +3215,7 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
                                     {t.pending.map((o, i) => (
                                         <div key={i} style={{background:'#0a0a0a',padding:'1rem',borderRadius:'8px',marginBottom:'1rem'}}>
                                             <div style={{display:'flex',gap:'1rem',marginBottom:'1rem'}}>
-                                                <span style={{fontSize:'2rem'}}>{o.image}</span>
+                                                <span style={{fontSize:'2rem'}}><IconVal v={o.image} /></span>
                                                 <div style={{flex:1}}>
                                                     <div style={{fontWeight:'800'}}>{o.name}</div>
                                                     <div style={{color:'#888'}}>Qtd: {o.quantity} • {config.currency} {(o.price * o.quantity).toFixed(2)}</div>
@@ -3351,7 +3478,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
     
     // Carregar deliveries do Firebase
     useEffect(() => {
-        db.ref('deliveries').on('value', snap => {
+        const cb = db.ref('deliveries').on('value', snap => {
             if (snap.val()) {
                 const list = Object.values(snap.val()).sort((a,b) => b.createdAt - a.createdAt);
                 setDeliveries(list);
@@ -3359,7 +3486,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
                 setDeliveries([]);
             }
         });
-        return () => db.ref('deliveries').off();
+        return () => db.ref('deliveries').off('value', cb);
     }, []);
     
     const deliveryPending = deliveries.filter(d => d.status === 'pendente' || d.status === 'preparando').length;
@@ -3405,15 +3532,15 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
                 );
                 
                 if (choice === '1') {
-                    tip = total * 0.10;
+                    tip = Math.round(total * 0.10 * 100) / 100;
                 } else if (choice === '2') {
-                    tip = total * 0.15;
+                    tip = Math.round(total * 0.15 * 100) / 100;
                 } else if (choice === '3') {
-                    tip = total * 0.20;
+                    tip = Math.round(total * 0.20 * 100) / 100;
                 } else if (choice === '4') {
                     const customTip = parseFloat(prompt('Digite o valor da gorjeta:'));
                     if (customTip && customTip > 0) {
-                        tip = customTip;
+                        tip = Math.round(customTip * 100) / 100;
                     }
                 }
                 
@@ -3424,7 +3551,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
             }
         }
         
-        const totalWithTip = total + tip;
+        const totalWithTip = Math.round((total + tip) * 100) / 100;
         
         let confirmMsg = `Fechar conta da Mesa ${tableId}?\n\nSubtotal: ${config.currency} ${subtotal.toFixed(2)}`;
         if (tip > 0) {
@@ -3437,6 +3564,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
         }
         
         // Salvar venda no histórico
+        const updates = {};
         if (totalWithTip > 0) {
             const sale = {
                 id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
@@ -3452,14 +3580,11 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
                 timestamp: Date.now()
             };
             
-            db.ref(`sales/${sale.id}`).set(sale).catch(error => {
-                console.error('Erro ao salvar venda:', error);
-                alert('⚠️ Erro ao salvar histórico de venda, mas a mesa será fechada.');
-            });
+            updates[`sales/${sale.id}`] = sale;
         }
         
-        // Resetar mesa
-        db.ref(`tables/${tableId}`).set({
+        // Resetar mesa (venda + reset em uma única operação atômica)
+        updates[`tables/${tableId}`] = {
             id: tableId,
             status: 'livre',
             waiter: null,
@@ -3471,7 +3596,8 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
             orders: [],
             pending: [],
             callWaiter: false
-        }).then(() => {
+        };
+        db.ref().update(updates).then(() => {
             alert('✅ Mesa fechada com sucesso!');
             setSel(null);
         }).catch(error => {
@@ -3512,31 +3638,16 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
     
     const confirmOrder = (tableId, idx) => {
         const t = tables.find(x => x.id === tableId);
-        if (!t || !t.pending || !t.pending[idx]) {
+        const item = t && t.pending ? t.pending[idx] : null;
+        if (!item) {
             alert('❌ Erro: Pedido não encontrado!');
             return;
         }
-        
-        const o = t.pending[idx];
-        const newOrders = [...(t.orders || []), {...o, confirmedAt: Date.now()}];
-        const newPending = t.pending.filter((_, i) => i !== idx);
-        const newSubtotal = (t.subtotal || 0) + (o.price * o.quantity);
-        const newTotal = newSubtotal; // SEM TAXA DE SERVIÇO
-        
-        db.ref(`tables/${tableId}`).update({
-            orders: newOrders,
-            pending: newPending,
-            subtotal: newSubtotal,
-            total: newTotal
-        }).then(() => {
+        mesaPendentesTx(tableId, 'confirm', {orderId: item.orderId, idx}).then(r => {
+            if (!r.committed) { alert('⚠️ Este pedido já foi tratado por outra pessoa.'); return; }
             playSound();
             alert('✅ Pedido confirmado!');
-            // Atualizar o modal com a mesa atualizada
-            const updatedTable = tables.find(x => x.id === tableId);
-            if (updatedTable && newPending.length === 0) {
-                // Se não tem mais pendentes, fecha o modal
-                setSel(null);
-            }
+            if ((t.pending || []).length <= 1) setSel(null);
         }).catch(err => {
             console.error('Erro ao confirmar pedido:', err);
             alert('❌ Erro ao confirmar pedido!');
@@ -3547,18 +3658,15 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
         if (!confirm('Tem certeza que deseja CANCELAR este pedido?')) return;
         
         const t = tables.find(x => x.id === tableId);
-        if (!t || !t.pending || !t.pending[idx]) {
+        const item = t && t.pending ? t.pending[idx] : null;
+        if (!item) {
             alert('❌ Erro: Pedido não encontrado!');
             return;
         }
-        
-        const newPending = t.pending.filter((_, i) => i !== idx);
-        
-        db.ref(`tables/${tableId}/pending`).set(newPending).then(() => {
+        mesaPendentesTx(tableId, 'cancel', {orderId: item.orderId, idx}).then(r => {
+            if (!r.committed) { alert('⚠️ Este pedido já foi tratado por outra pessoa.'); return; }
             alert('❌ Pedido cancelado!');
-            if (newPending.length === 0) {
-                setSel(null);
-            }
+            if ((t.pending || []).length <= 1) setSel(null);
         }).catch(err => {
             console.error('Erro ao cancelar pedido:', err);
             alert('❌ Erro ao cancelar pedido!');
@@ -3576,22 +3684,10 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
             return;
         }
         
-        // Adicionar todos os pendentes aos confirmados
-        const newOrders = [...(t.orders || []), ...t.pending.map(p => ({...p, confirmedAt: Date.now()}))];
-        
-        // Calcular novo total SEM TAXA
-        const pendingTotal = t.pending.reduce((sum, p) => sum + (p.price * p.quantity), 0);
-        const newSubtotal = (t.subtotal || 0) + pendingTotal;
-        const newTotal = newSubtotal; // SEM TAXA DE SERVIÇO
-        
-        db.ref(`tables/${tableId}`).update({
-            orders: newOrders,
-            pending: [],
-            subtotal: newSubtotal,
-            total: newTotal
-        }).then(() => {
+        mesaPendentesTx(tableId, 'confirm', 'all').then(r => {
+            if (!r.committed) { alert('⚠️ Não havia mais pedidos pendentes.'); return; }
             playSound();
-            alert(`✅ ${t.pending.length} pedidos aprovados!`);
+            alert(`✅ ${r.afetados} pedidos aprovados!`);
         }).catch(err => {
             console.error('Erro ao aprovar todos:', err);
             alert('❌ Erro ao aprovar pedidos!');
@@ -3952,7 +4048,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
                                         marginBottom:'1rem'
                                     }}>
                                         <div style={{display:'flex',gap:'1.5rem',alignItems:'center',marginBottom:'1rem'}}>
-                                            <span style={{fontSize:'3rem'}}>{o.image}</span>
+                                            <span style={{fontSize:'3rem'}}><IconVal v={o.image} /></span>
                                             <div style={{flex:1}}>
                                                 <div style={{fontWeight:'800',fontSize:'1.2rem',marginBottom:'0.3rem'}}>{o.name}</div>
                                                 <div style={{color:'#888'}}>Qtd: {o.quantity} • {config.currency} {o.price.toFixed(2)} cada</div>
@@ -4013,7 +4109,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
                                             padding:'1rem',
                                             borderBottom: i < sel.orders.length - 1 ? '1px solid #333' : 'none'
                                         }}>
-                                            <span style={{fontSize:'2rem'}}>{o.image}</span>
+                                            <span style={{fontSize:'2rem'}}><IconVal v={o.image} /></span>
                                             <div style={{flex:1}}>
                                                 <div style={{fontWeight:'800',fontSize:'1.1rem'}}>{o.name}</div>
                                                 <div style={{color:'#888',fontSize:'0.85rem'}}>Qtd: {o.quantity}</div>
@@ -4257,30 +4353,16 @@ function DeliveryTab({deliveries, products, config, onNew}) {
             return;
         }
         
-        db.ref(`deliveries/${d.id}/status`).set(next);
         if (next === 'entregue') {
-            // Salvar como venda delivery
-            const sale = {
-                id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
-                type: 'delivery',
-                tableId: null,
-                waiter: null,
-                waiterName: 'Delivery',
-                customerName: d.customerName,
-                customerPhone: d.phone,
-                address: d.address,
-                subtotal: d.subtotal,
-                deliveryFee: d.deliveryFee || 0,
-                tip: 0,
-                total: d.total,
-                payment: d.payment,
-                troco: d.troco || null,
-                orders: d.items,
-                date: new Date().toISOString(),
-                timestamp: Date.now()
-            };
-            db.ref(`sales/${sale.id}`).set(sale);
-            db.ref(`deliveries/${d.id}/closedAt`).set(Date.now());
+            // Venda com id fixo (idempotente) + status gravados juntos
+            const sale = montarVendaDelivery(d);
+            db.ref().update({
+                [`deliveries/${d.id}/status`]: 'entregue',
+                [`deliveries/${d.id}/closedAt`]: Date.now(),
+                [`sales/${sale.id}`]: sale
+            });
+        } else {
+            db.ref(`deliveries/${d.id}/status`).set(next);
         }
     };
     
@@ -4393,7 +4475,7 @@ function DeliveryTab({deliveries, products, config, onNew}) {
                         <div style={{background:'var(--background)',borderRadius:'10px',padding:'1rem',marginBottom:'1.5rem'}}>
                             {(d.items||[]).map((item,i) => (
                                 <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'0.4rem 0',borderBottom:'1px solid var(--border)'}}>
-                                    <span>{item.image} {item.quantity}x {item.name}</span>
+                                    <span><IconVal v={item.image} /> {item.quantity}x {item.name}</span>
                                     <span style={{fontWeight:'700',color:'#e67e22'}}>{config.currency} {(item.price*item.quantity).toFixed(2)}</span>
                                 </div>
                             ))}
@@ -4771,11 +4853,11 @@ function ReservasTab({config, tables, onAdd}) {
     const [reservas, setReservas] = useState([]);
 
     useEffect(() => {
-        db.ref('reservas').on('value', s => {
+        const cb = db.ref('reservas').on('value', s => {
             if (s.val()) setReservas(Object.values(s.val()).sort((a,b)=>a.timestamp-b.timestamp));
             else setReservas([]);
         });
-        return () => db.ref('reservas').off();
+        return () => db.ref('reservas').off('value', cb);
     }, []);
 
     const statusColor = {pendente:'#f39c12', confirmada:'#4a9d4e', cancelada:'#e74c3c', concluida:'#6c757d'};
@@ -4784,7 +4866,7 @@ function ReservasTab({config, tables, onAdd}) {
     const setStatus = (id, status) => db.ref(`reservas/${id}/status`).set(status);
     const del = (id) => { if(confirm('Excluir reserva?')) db.ref(`reservas/${id}`).remove(); };
 
-    const hoje = new Date().toISOString().slice(0,10);
+    const hoje = hojeLocal();
     const futuras = reservas.filter(r => r.data >= hoje && r.status !== 'cancelada' && r.status !== 'concluida');
     const passadas = reservas.filter(r => r.data < hoje || r.status === 'concluida' || r.status === 'cancelada');
 
@@ -4873,7 +4955,7 @@ function ReservasTab({config, tables, onAdd}) {
 
 function ReservaModal({tables, config, onClose}) {
     const [d, setD] = useState({
-        nome:'', telefone:'', data: new Date().toISOString().slice(0,10),
+        nome:'', telefone:'', data: hojeLocal(),
         hora:'20:00', pessoas:2, mesa:'', obs:'', status:'pendente'
     });
 
@@ -5257,7 +5339,16 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
     const [selectedTable, setSelectedTable] = useState(null);
     const [chatMessage, setChatMessage] = useState('');
     
-    const myTables = tables.filter(t => (t.waiter === user.waiterId || t.waiter === null) && t.status === 'ocupada');
+    // Marca como lidas as mensagens do cliente quando o chat está aberto
+    useEffect(() => {
+        if (!showChat || !selectedTable) return;
+        const t = tables.find(x => x.id === selectedTable.id);
+        if (t && t.messages && t.messages.some(m => m && m.from === 'customer' && !m.read)) {
+            db.ref(`tables/${t.id}/messages`).transaction(cur => Array.isArray(cur) ? cur.map(m => (m && m.from === 'customer') ? {...m, read: true} : m) : cur);
+        }
+    }, [showChat, selectedTable, tables]);
+    
+    const myTables = tables.filter(t => (t.waiter === user.waiterId || !t.waiter) && t.status === 'ocupada');
     const pendingCount = myTables.reduce((s, t) => s + (t.pending ? t.pending.length : 0), 0);
     const totalSales = myTables.reduce((s, t) => s + t.total, 0);
     const callingCount = myTables.filter(t => t.callWaiter).length;
@@ -5292,22 +5383,9 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
     const confirmPending = (tableId, idx) => {
         const t = tables.find(x => x.id === tableId);
         if (!t || !t.pending || !t.pending[idx]) return;
-        
         const item = t.pending[idx];
-        const newOrders = [...(t.orders || []), {...item, confirmedAt: Date.now()}];
-        const newPending = t.pending.filter((_, i) => i !== idx);
-        
-        const itemTotal = item.price * item.quantity;
-        const newSubtotal = (t.subtotal || 0) + itemTotal;
-        const newTotal = newSubtotal;
-        
-        db.ref(`tables/${tableId}`).update({
-            orders: newOrders,
-            pending: newPending,
-            subtotal: newSubtotal,
-            total: newTotal
-        }).then(() => {
-            playSound();
+        mesaPendentesTx(tableId, 'confirm', {orderId: item.orderId, idx}).then(r => {
+            if (r.committed) playSound();
         });
     };
     
@@ -5317,16 +5395,8 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
         
         if (!confirm(`Confirmar TODOS os ${t.pending.length} pedidos?`)) return;
         
-        const newOrders = [...(t.orders || []), ...t.pending.map(p => ({...p, confirmedAt: Date.now()}))];
-        const pendingTotal = t.pending.reduce((sum, p) => sum + (p.price * p.quantity), 0);
-        const newSubtotal = (t.subtotal || 0) + pendingTotal;
-        
-        db.ref(`tables/${tableId}`).update({
-            orders: newOrders,
-            pending: [],
-            subtotal: newSubtotal,
-            total: newSubtotal
-        }).then(() => {
+        mesaPendentesTx(tableId, 'confirm', 'all').then(r => {
+            if (!r.committed) return;
             playSound();
             alert('✅ Todos os pedidos confirmados!');
         });
@@ -5343,8 +5413,7 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
             read: false
         };
         
-        const messages = selectedTable.messages || [];
-        db.ref(`tables/${selectedTable.id}/messages`).set([...messages, newMessage]);
+        db.ref(`tables/${selectedTable.id}/messages`).transaction(cur => [...(Array.isArray(cur) ? cur : Object.values(cur || {})), newMessage]);
         
         setChatMessage('');
         playSound();
@@ -5669,7 +5738,7 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
                                             if (ex) setCart(cart.map(i => i.id === p.id ? {...i, quantity: i.quantity + 1} : i));
                                             else setCart([...cart, {...p, quantity: 1}]);
                                         }} style={{background:'#1a1a1a',border:'2px solid #333',borderRadius:'12px',padding:'1rem',textAlign:'center',cursor:'pointer'}}>
-                                            <div style={{fontSize:'3rem',marginBottom:'0.5rem'}}>{p.image}</div>
+                                            <div style={{fontSize:'3rem',marginBottom:'0.5rem'}}><IconVal v={p.image} /></div>
                                             <div style={{fontWeight:'800',fontSize:'0.9rem',marginBottom:'0.3rem'}}>{p.name}</div>
                                             <div style={{color:'#3498db',fontWeight:'900'}}>{config.currency} {p.price.toFixed(2)}</div>
                                         </div>
@@ -5682,7 +5751,7 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
                                 <h3 style={{color:'#3498db',marginBottom:'1rem'}}>🛒 Carrinho ({cart.length})</h3>
                                 {cart.map(i => (
                                     <div key={i.id} style={{background:'#0a0a0a',borderRadius:'8px',padding:'0.8rem',marginBottom:'0.8rem',display:'flex',alignItems:'center',gap:'0.8rem'}}>
-                                        <span style={{fontSize:'1.5rem'}}>{i.image}</span>
+                                        <span style={{fontSize:'1.5rem'}}><IconVal v={i.image} /></span>
                                         <div style={{flex:1}}>
                                             <div style={{fontWeight:'800',fontSize:'0.9rem'}}>{i.name}</div>
                                             <div style={{color:'#3498db',fontSize:'0.85rem'}}>{config.currency} {(i.price * i.quantity).toFixed(2)}</div>
@@ -5706,6 +5775,35 @@ function Waiter({tables, products, config, user, setView, theme, toggleTheme}) {
                     </div>
                 )}
             </main>
+            
+            {/* Chat com o cliente da mesa */}
+            {showChat && selectedTable && (() => {
+                const mesaChat = tables.find(x => x.id === selectedTable.id) || selectedTable;
+                const msgs = Array.isArray(mesaChat.messages) ? mesaChat.messages : Object.values(mesaChat.messages || {});
+                return (
+                    <div onClick={() => {setShowChat(false); setSelectedTable(null);}} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:'1rem'}}>
+                        <div onClick={e => e.stopPropagation()} style={{background:'#1a1a1a',borderRadius:'20px',maxWidth:'500px',width:'100%',border:'2px solid #3498db',display:'flex',flexDirection:'column',maxHeight:'85vh'}}>
+                            <div style={{padding:'1.2rem 1.5rem',borderBottom:'1px solid #333',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                <h3 style={{color:'#3498db',fontWeight:'900'}}>💬 Mesa {mesaChat.id}{mesaChat.customerName ? ' - ' + mesaChat.customerName : ''}</h3>
+                                <button onClick={() => {setShowChat(false); setSelectedTable(null);}} style={{background:'transparent',border:'none',color:'#888',fontSize:'1.5rem',cursor:'pointer'}}>✕</button>
+                            </div>
+                            <div style={{flex:1,overflowY:'auto',padding:'1rem',display:'flex',flexDirection:'column',gap:'0.6rem',minHeight:'200px'}}>
+                                {msgs.length === 0 && <p style={{color:'#888',textAlign:'center'}}>Nenhuma mensagem ainda.</p>}
+                                {msgs.map((m, i) => (
+                                    <div key={i} style={{alignSelf: m.from === 'customer' ? 'flex-start' : 'flex-end', maxWidth:'80%', background: m.from === 'customer' ? '#2a2a2a' : '#3498db', color:'#fff', padding:'0.7rem 1rem', borderRadius:'12px'}}>
+                                        <div style={{fontSize:'0.7rem',opacity:0.7,marginBottom:'0.2rem'}}>{m.senderName || (m.from === 'customer' ? 'Cliente' : 'Equipe')}</div>
+                                        <div>{m.text}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div style={{padding:'1rem',borderTop:'1px solid #333',display:'flex',gap:'0.5rem'}}>
+                                <input value={chatMessage} onChange={e => setChatMessage(e.target.value)} onKeyPress={e => {if (e.key === 'Enter') sendChatMessage();}} placeholder="Digite sua mensagem..." style={{flex:1,padding:'0.9rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',color:'#fff'}} />
+                                <button onClick={sendChatMessage} style={{padding:'0.9rem 1.2rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>ENVIAR</button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }
@@ -5758,8 +5856,7 @@ function Customer({tables, products, config, waiters, setView, theme, toggleThem
             read: false
         };
         
-        const messages = table.messages || [];
-        db.ref(`tables/${tableId}/messages`).set([...messages, newMessage]);
+        db.ref(`tables/${tableId}/messages`).transaction(cur => [...(Array.isArray(cur) ? cur : Object.values(cur || {})), newMessage]);
         
         setChatMessage('');
         playSound();
@@ -5776,8 +5873,8 @@ function Customer({tables, products, config, waiters, setView, theme, toggleThem
     
     useEffect(() => {
         if (!tableId) {setView('login'); return;}
-        db.ref(`tables/${tableId}`).on('value', s => {if (s.val()) setTable(s.val());});
-        return () => db.ref(`tables/${tableId}`).off();
+        const cb = db.ref(`tables/${tableId}`).on('value', s => {if (s.val()) setTable(s.val());});
+        return () => db.ref(`tables/${tableId}`).off('value', cb);
     }, [tableId]);
     
     const addOrder = () => {
@@ -5868,7 +5965,7 @@ function Customer({tables, products, config, waiters, setView, theme, toggleThem
                                             if (ex) setCart(cart.map(i => i.id === p.id ? {...i, quantity: i.quantity + 1} : i));
                                             else setCart([...cart, {...p, quantity: 1}]);
                                         }} style={{background:'#fff',border:'2px solid #e0e0e0',borderRadius:'16px',padding:'1.5rem',textAlign:'center',cursor:'pointer'}}>
-                                            <span style={{fontSize:'3.5rem',display:'block',marginBottom:'0.8rem'}}>{p.image}</span>
+                                            <span style={{fontSize:'3.5rem',display:'block',marginBottom:'0.8rem'}}><IconVal v={p.image} /></span>
                                             <div style={{fontWeight:'800',marginBottom:'0.5rem',fontSize:'0.95rem'}}>{p.name}</div>
                                             <div style={{color:'#d4a574',fontSize:'1.2rem',fontWeight:'900'}}>{config.currency} {p.price.toFixed(2)}</div>
                                         </div>
@@ -5960,7 +6057,7 @@ function Customer({tables, products, config, waiters, setView, theme, toggleThem
                                 <h3 style={{marginBottom:'1rem',color:'#4a9d4e'}}>✓ Confirmados</h3>
                                 {table.orders.map((o, i) => (
                                     <div key={i} style={{background:'#f9f9f9',borderRadius:'12px',padding:'1rem',marginBottom:'1rem',display:'flex',alignItems:'center',gap:'1rem'}}>
-                                        <span style={{fontSize:'2rem'}}>{o.image}</span>
+                                        <span style={{fontSize:'2rem'}}><IconVal v={o.image} /></span>
                                         <div style={{flex:1}}>
                                             <div style={{fontWeight:'800'}}>{o.name}</div>
                                             <div style={{color:'#666'}}>Qtd: {o.quantity}</div>
@@ -6261,7 +6358,7 @@ function Customer({tables, products, config, waiters, setView, theme, toggleThem
                         <div style={{padding:'2rem'}}>
                             {cart.map(i => (
                                 <div key={i.id} style={{background:'#f9f9f9',borderRadius:'16px',padding:'1.2rem',marginBottom:'1rem',display:'flex',alignItems:'center',gap:'1rem'}}>
-                                    <span style={{fontSize:'2.5rem'}}>{i.image}</span>
+                                    <span style={{fontSize:'2.5rem'}}><IconVal v={i.image} /></span>
                                     <div style={{flex:1}}>
                                         <div style={{fontWeight:'800'}}>{i.name}</div>
                                         <div style={{color:'#d4a574',fontWeight:'800'}}>{config.currency} {(i.price * i.quantity).toFixed(2)}</div>
