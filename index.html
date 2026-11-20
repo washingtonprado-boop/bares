@@ -1694,6 +1694,92 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
 }
 
 
+// QR Codes enviados (upload) para cada mesa: nó qrMesas/<numero> = imagem (dataURL)
+function useQrMesas() {
+    const [qr, setQr] = useState({});
+    useEffect(() => {
+        const ref = db.ref('qrMesas');
+        const cb = ref.on('value', s => setQr(s.val() || {}));
+        return () => ref.off('value', cb);
+    }, []);
+    return qr;
+}
+
+// Redimensiona e salva uma imagem de QR em qrMesas/<chave> (chave = nº da mesa, 'cardapio' ou 'delivery')
+function enviarQrImagem(chave, file, rotulo) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('❌ Envie um arquivo de imagem (PNG ou JPG).'); return; }
+    const reader = new FileReader();
+    reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+            const max = 700;
+            const r = Math.min(1, max / Math.max(img.width, img.height));
+            const c = document.createElement('canvas');
+            c.width = Math.round(img.width * r);
+            c.height = Math.round(img.height * r);
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, c.width, c.height);
+            ctx.drawImage(img, 0, 0, c.width, c.height);
+            db.ref('qrMesas/' + chave).set(c.toDataURL('image/png'))
+                .then(() => alert('✅ QR (' + rotulo + ') salvo!'))
+                .catch(() => alert('❌ Erro ao salvar o QR (' + rotulo + ').'));
+        };
+        img.onerror = () => alert('❌ Não foi possível ler a imagem.');
+        img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+function QrUploadBotoes({chave, rotulo, qr, cor}) {
+    return (
+        <div style={{display:'grid',gap:'0.7rem'}}>
+            <label style={{display:'block',padding:'0.8rem',background:'transparent',border:'2px solid ' + cor,borderRadius:'10px',color:cor,fontWeight:'800',cursor:'pointer',textAlign:'center'}}>
+                {qr[chave] ? '🔄 TROCAR IMAGEM DO QR' : '📤 ENVIAR IMAGEM DO QR'}
+                <input type="file" accept="image/*" style={{display:'none'}} onChange={e => {enviarQrImagem(chave, e.target.files[0], rotulo); e.target.value = '';}} />
+            </label>
+            {qr[chave] && (
+                <button onClick={() => {if (confirm('Remover a imagem enviada? Voltará a usar o QR gerado pelo sistema.')) db.ref('qrMesas/' + chave).remove();}}
+                    style={{padding:'0.6rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>🗑️ REMOVER IMAGEM</button>
+            )}
+        </div>
+    );
+}
+
+function QrMesasTab({config}) {
+    const qr = useQrMesas();
+    const total = parseInt(config.tables) || 0;
+    
+    const enviar = (n, file) => enviarQrImagem(n, file, 'Mesa ' + n);
+    
+    const remover = (n) => {
+        if (confirm('Remover o QR enviado da Mesa ' + n + '? Voltará a usar o QR gerado pelo sistema.')) db.ref('qrMesas/' + n).remove();
+    };
+    
+    return (
+        <div>
+            <h2 style={{color:'#d4a574',fontSize:'1.8rem',fontWeight:'900',marginBottom:'0.5rem'}}>📷 QR Codes das Mesas</h2>
+            <p style={{color:'#888',marginBottom:'1.5rem'}}>Envie a imagem do QR de cada mesa. Ela passa a aparecer no botão QR do Admin e do Balcão no lugar do QR gerado automaticamente. Sem imagem enviada, o sistema continua gerando o QR normalmente.</p>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'1rem'}}>
+                {Array.from({length: total}, (_, i) => i + 1).map(n => (
+                    <div key={n} style={{background:'#1a1a1a',border:'2px solid ' + (qr[n] ? '#4a9d4e' : '#333'),borderRadius:'14px',padding:'1rem',textAlign:'center'}}>
+                        <div style={{color:'#d4a574',fontWeight:'900',marginBottom:'0.6rem'}}>🍽️ Mesa {n}</div>
+                        <div style={{background:'#fff',borderRadius:'10px',minHeight:'140px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'0.7rem'}}>
+                            {qr[n] ? <img src={qr[n]} alt={'QR Mesa ' + n} style={{maxWidth:'100%',maxHeight:'160px'}} /> : <span style={{color:'#999',fontSize:'0.85rem'}}>Sem imagem</span>}
+                        </div>
+                        <label style={{display:'block',padding:'0.7rem',background:'#3498db',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.85rem',marginBottom:qr[n] ? '0.5rem' : 0}}>
+                            {qr[n] ? '🔄 TROCAR' : '📤 ENVIAR QR'}
+                            <input type="file" accept="image/*" style={{display:'none'}} onChange={e => {enviar(n, e.target.files[0]); e.target.value = '';}} />
+                        </label>
+                        {qr[n] && <button onClick={() => remover(n)} style={{width:'100%',padding:'0.6rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.8rem'}}>🗑️ REMOVER</button>}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function Master({config, products, waiters, tables, sales, setView, theme, toggleTheme}) {
     const [tab, setTab] = useState('config');
     const [modal, setModal] = useState(null);
@@ -1765,10 +1851,12 @@ function Master({config, products, waiters, tables, sales, setView, theme, toggl
                 <button onClick={() => setTab('reservas')} style={{padding:'1.2rem 2rem',background:tab==='reservas'?'#1a1a1a':'transparent',border:'none',color:tab==='reservas'?'#3498db':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📅 RESERVAS</button>
                 <button onClick={() => setTab('cardapio')} style={{padding:'1.2rem 2rem',background:tab==='cardapio'?'#1a1a1a':'transparent',border:'none',color:tab==='cardapio'?'#4a9d4e':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📋 CARDÁPIO QR</button>
                 <button onClick={() => setTab('clientes')} style={{padding:'1.2rem 2rem',background:tab==='clientes'?'#1a1a1a':'transparent',border:'none',color:tab==='clientes'?'#9b59b6':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>🏆 CLIENTES</button>
+                <button onClick={() => setTab('qrmesas')} style={{padding:'1.2rem 2rem',background:tab==='qrmesas'?'#1a1a1a':'transparent',border:'none',color:tab==='qrmesas'?'#3498db':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📷 QR MESAS</button>
                 <button onClick={() => setTab('relatorios')} style={{padding:'1.2rem 2rem',background:tab==='relatorios'?'#1a1a1a':'transparent',border:'none',color:tab==='relatorios'?'#d4a574':'#888',fontWeight:'800',cursor:'pointer',whiteSpace:'nowrap'}}>📊 RELATÓRIOS</button>
             </nav>
             
             <main style={{padding:'2rem',maxWidth:'1200px',margin:'0 auto'}}>
+                {tab === 'qrmesas' && <QrMesasTab config={config} />}
                 {tab === 'config' && <ConfigTab config={config} />}
                 {tab === 'usuarios' && <UsersTab config={config} waiters={waiters} onAdd={() => setModal('user')} onEdit={(u) => {setEdit(u); setModal('user');}} />}
                 {tab === 'products' && <ProductsTab products={products} config={config} onAdd={() => setModal('product')} onEdit={(p) => {setEdit(p); setModal('product');}} />}
@@ -2916,6 +3004,7 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
     const [tab, setTab] = useState('mesas');
     const [selW, setSelW] = useState(null);
     const [qrModal, setQrModal] = useState(null);
+    const qrMesas = useQrMesas();
     
     const openTable = (id, wId) => {db.ref(`tables/${id}`).update({status: 'ocupada', waiter: wId}); alert('Mesa aberta!');};
     const closeTable = (id) => {
@@ -3434,7 +3523,8 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
                         <p style={{color:'#666',marginBottom:'2rem',fontSize:'0.95rem'}}>Escaneie o QR Code para acessar o cardápio</p>
                         
                         <div style={{background:'#f5f5f5',padding:'2rem',borderRadius:'12px',marginBottom:'1.5rem',display:'flex',justifyContent:'center',alignItems:'center',minHeight:'340px'}}>
-                            <canvas id={`qr-canvas-${qrModal}`}></canvas>
+                            {qrMesas[qrModal] && <img src={qrMesas[qrModal]} alt={'QR Mesa ' + qrModal} style={{maxWidth:'100%',maxHeight:'320px'}} />}
+                            <canvas id={`qr-canvas-${qrModal}`} style={{display: qrMesas[qrModal] ? 'none' : 'block'}}></canvas>
                         </div>
                         
                         <div style={{background:'#f0f0f0',padding:'1rem',borderRadius:'8px',marginBottom:'1.5rem'}}>
@@ -3448,10 +3538,10 @@ function Admin({tables, waiters, products, config, sales, setView, theme, toggle
                             <button 
                                 onClick={() => {
                                     const canvas = document.getElementById(`qr-canvas-${qrModal}`);
-                                    if (canvas) {
+                                    if (qrMesas[qrModal] || canvas) {
                                         const link = document.createElement('a');
                                         link.download = `qrcode-mesa-${qrModal}.png`;
-                                        link.href = canvas.toDataURL();
+                                        link.href = qrMesas[qrModal] || canvas.toDataURL();
                                         link.click();
                                     }
                                 }}
@@ -3472,6 +3562,7 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
     const [sel, setSel] = useState(null);
     const [selW, setSelW] = useState(null);
     const [qrModal, setQrModal] = useState(null);
+    const qrMesas = useQrMesas();
     const [tab, setTab] = useState('mesas');
     const [deliveries, setDeliveries] = useState([]);
     const [deliveryModal, setDeliveryModal] = useState(false);
@@ -4262,7 +4353,8 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
                         <p style={{color:'#666',marginBottom:'2rem',fontSize:'0.95rem'}}>Escaneie o QR Code para acessar o cardápio</p>
                         
                         <div style={{background:'#f5f5f5',padding:'2rem',borderRadius:'12px',marginBottom:'1.5rem',display:'flex',justifyContent:'center',alignItems:'center',minHeight:'340px'}}>
-                            <canvas id={`qr-canvas-balcao-${qrModal}`}></canvas>
+                            {qrMesas[qrModal] && <img src={qrMesas[qrModal]} alt={'QR Mesa ' + qrModal} style={{maxWidth:'100%',maxHeight:'320px'}} />}
+                            <canvas id={`qr-canvas-balcao-${qrModal}`} style={{display: qrMesas[qrModal] ? 'none' : 'block'}}></canvas>
                         </div>
                         
                         <div style={{background:'#f0f0f0',padding:'1rem',borderRadius:'8px',marginBottom:'1.5rem'}}>
@@ -4276,10 +4368,10 @@ function Balcao({tables, config, waiters, products, setView, theme, toggleTheme}
                             <button 
                                 onClick={() => {
                                     const canvas = document.getElementById(`qr-canvas-balcao-${qrModal}`);
-                                    if (canvas) {
+                                    if (qrMesas[qrModal] || canvas) {
                                         const link = document.createElement('a');
                                         link.download = `qrcode-mesa-${qrModal}.png`;
-                                        link.href = canvas.toDataURL();
+                                        link.href = qrMesas[qrModal] || canvas.toDataURL();
                                         link.click();
                                     }
                                 }}
@@ -5027,6 +5119,7 @@ function ReservaModal({tables, config, onClose}) {
 // ═══════════════════════════════════════════════════════
 
 function CardapioQRTab({products, config}) {
+    const qrEnviados = useQrMesas();
     const qrRef = useRef(null);
     const [qrGenerated, setQrGenerated] = useState(false);
 
@@ -5100,7 +5193,8 @@ function CardapioQRTab({products, config}) {
                 <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid #4a9d4e',textAlign:'center'}}>
                     <h3 style={{color:'#4a9d4e',marginBottom:'1.5rem',fontWeight:'800'}}>📱 QR Cardápio</h3>
                     <div style={{background:'#fff',padding:'1rem',borderRadius:'12px',display:'inline-block',marginBottom:'1rem'}}>
-                        <canvas ref={qrRef} />
+                        {qrEnviados.cardapio && <img src={qrEnviados.cardapio} alt="QR Cardápio" style={{maxWidth:'220px',maxHeight:'220px',display:'block'}} />}
+                        <canvas ref={qrRef} style={{display: qrEnviados.cardapio ? 'none' : 'block'}} />
                     </div>
                     <p style={{color:'var(--text-secondary)',fontSize:'0.82rem',marginBottom:'1rem'}}>
                         Cliente escaneia → vê cardápio sem login
@@ -5114,6 +5208,7 @@ function CardapioQRTab({products, config}) {
                             style={{padding:'0.8rem',background:'#4a9d4e',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>
                             🖨️ IMPRIMIR CARDÁPIO
                         </button>
+                        <QrUploadBotoes chave="cardapio" rotulo="Cardápio" qr={qrEnviados} cor="#4a9d4e" />
                     </div>
                 </div>
 
@@ -5121,7 +5216,8 @@ function CardapioQRTab({products, config}) {
                 <div style={{background:'var(--surface)',borderRadius:'16px',padding:'2rem',border:'2px solid #e67e22',textAlign:'center'}}>
                     <h3 style={{color:'#e67e22',marginBottom:'1.5rem',fontWeight:'800'}}>🛵 QR Delivery</h3>
                     <div style={{background:'#fff',padding:'1rem',borderRadius:'12px',display:'inline-block',marginBottom:'1rem'}}>
-                        <canvas ref={qrDeliveryRef} />
+                        {qrEnviados.delivery && <img src={qrEnviados.delivery} alt="QR Delivery" style={{maxWidth:'220px',maxHeight:'220px',display:'block'}} />}
+                        <canvas ref={qrDeliveryRef} style={{display: qrEnviados.delivery ? 'none' : 'block'}} />
                     </div>
                     <p style={{color:'var(--text-secondary)',fontSize:'0.82rem',marginBottom:'1rem'}}>
                         Cliente escaneia → faz pedido delivery online
@@ -5135,6 +5231,7 @@ function CardapioQRTab({products, config}) {
                             style={{padding:'0.8rem',background:'transparent',border:'2px solid #e67e22',borderRadius:'10px',color:'#e67e22',fontWeight:'800',cursor:'pointer'}}>
                             👁️ VER COMO CLIENTE
                         </button>
+                        <QrUploadBotoes chave="delivery" rotulo="Delivery" qr={qrEnviados} cor="#e67e22" />
                     </div>
                 </div>
             </div>
