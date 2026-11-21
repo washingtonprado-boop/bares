@@ -1747,6 +1747,20 @@ function QrUploadBotoes({chave, rotulo, qr, cor}) {
     );
 }
 
+function linkMesa(n) {
+    return window.location.href.split('?')[0].split('#')[0] + '?mesa=' + n;
+}
+
+function copiarLinkMesa(n) {
+    const url = linkMesa(n);
+    const ok = () => alert('✅ Link da Mesa ' + n + ' copiado!\n\n' + url);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(ok).catch(() => prompt('Copie o link da mesa:', url));
+    } else {
+        prompt('Copie o link da mesa:', url);
+    }
+}
+
 function QrMesasTab({config}) {
     const qr = useQrMesas();
     const total = parseInt(config.tables) || 0;
@@ -1773,6 +1787,14 @@ function QrMesasTab({config}) {
                             <input type="file" accept="image/*" style={{display:'none'}} onChange={e => {enviar(n, e.target.files[0]); e.target.value = '';}} />
                         </label>
                         {qr[n] && <button onClick={() => remover(n)} style={{width:'100%',padding:'0.6rem',background:'#e74c3c',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.8rem'}}>🗑️ REMOVER</button>}
+                        <div style={{marginTop:'0.7rem',background:'#0a0a0a',border:'1px solid #333',borderRadius:'10px',padding:'0.6rem'}}>
+                            <div style={{color:'#888',fontSize:'0.7rem',fontWeight:'700',marginBottom:'0.3rem'}}>🔗 LINK DA MESA</div>
+                            <div style={{color:'#ccc',fontSize:'0.72rem',wordBreak:'break-all',marginBottom:'0.5rem'}}>{linkMesa(n)}</div>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.4rem'}}>
+                                <button onClick={() => copiarLinkMesa(n)} style={{padding:'0.5rem',background:'#4a9d4e',border:'none',borderRadius:'8px',color:'#fff',fontWeight:'800',cursor:'pointer',fontSize:'0.75rem'}}>📋 COPIAR</button>
+                                <button onClick={() => window.open(linkMesa(n), '_blank')} style={{padding:'0.5rem',background:'transparent',border:'1px solid #3498db',borderRadius:'8px',color:'#3498db',fontWeight:'800',cursor:'pointer',fontSize:'0.75rem'}}>👁️ ABRIR</button>
+                            </div>
+                        </div>
                     </div>
                 ))}
             </div>
