@@ -552,6 +552,12 @@ function App() {
                 if (prevDeliveries.current.length > 0 && list.length > prevDeliveries.current.length) {
                     playSound('delivery');
                 }
+                // Entregador clicou em "ESTOU AQUI"
+                const antes = {};
+                prevDeliveries.current.forEach(x => { antes[x.id] = x; });
+                if (prevDeliveries.current.length > 0 && list.some(x => x.chegouEm && antes[x.id] && !antes[x.id].chegouEm)) {
+                    playSound('delivery');
+                }
                 prevDeliveries.current = list;
             }
         });
@@ -695,6 +701,78 @@ function montarVendaDelivery(d) {
     };
 }
 
+// ─── ENTREGADOR: link individual por pedido (?entregador=<id>&k=<token>) ───
+function gerarTokenEntregador() {
+    return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+}
+
+function linkEntregador(d) {
+    return window.location.href.split('?')[0].split('#')[0] + '?entregador=' + d.id + '&k=' + (d.tokenEntregador || '');
+}
+
+function EntregadorPublico({entregaId, token, config, theme, toggleTheme}) {
+    const [d, setD] = useState(undefined); // undefined = carregando, null = não existe
+    
+    useEffect(() => {
+        const ref = db.ref('deliveries/' + entregaId);
+        const cb = ref.on('value', s => setD(s.val()));
+        return () => ref.off('value', cb);
+    }, [entregaId]);
+    
+    const caixa = (children, cor) => (
+        <div style={{minHeight:'100vh',background:'var(--background)',color:'var(--text)',display:'flex',alignItems:'center',justifyContent:'center',padding:'1.5rem'}}>
+            <div style={{maxWidth:'480px',width:'100%',background:'var(--surface)',borderRadius:'24px',padding:'2rem',border:'3px solid ' + (cor || '#3498db'),textAlign:'center'}}>{children}</div>
+        </div>
+    );
+    
+    if (d === undefined) return caixa(<p>Carregando...</p>);
+    if (!d || !token || d.tokenEntregador !== token) return caixa(<><div style={{fontSize:'3rem'}}>🔒</div><h2>Link inválido</h2><p style={{color:'var(--text-secondary)'}}>Peça um novo link de entrega ao estabelecimento.</p></>, '#e74c3c');
+    if (d.status === 'entregue') return caixa(<><div style={{fontSize:'3rem'}}>✅</div><h2>Entrega concluída</h2><p style={{color:'var(--text-secondary)'}}>Obrigado!</p></>, '#4a9d4e');
+    if (d.status === 'cancelado') return caixa(<><div style={{fontSize:'3rem'}}>❌</div><h2>Pedido cancelado</h2></>, '#e74c3c');
+    if (d.status !== 'saiu') return caixa(<><div style={{fontSize:'3rem'}}>⏳</div><h2>Pedido ainda não saiu</h2><p style={{color:'var(--text-secondary)'}}>Esta tela libera quando o pedido sair para entrega.</p></>, '#f39c12');
+    
+    const avisar = () => {
+        if (d.chegouEm) return;
+        db.ref('deliveries/' + entregaId).transaction(cur => {
+            if (!cur || cur.status !== 'saiu' || cur.chegouEm) return; // aborta
+            cur.chegouEm = Date.now();
+            return cur;
+        }).then(r => {
+            if (r.committed) { try { playSound('delivery'); } catch (e) {} }
+        }).catch(() => alert('❌ Não foi possível avisar. Verifique a internet e tente de novo.'));
+    };
+    
+    const pagto = d.payment === 'dinheiro'
+        ? '💵 Dinheiro' + (d.troco > 0 ? ' · Troco para ' + config.currency + ' ' + parseFloat(d.troco).toFixed(2) : '')
+        : d.payment === 'pix' ? '💠 PIX' : '💳 Cartão';
+    const tel = String(d.phone || '').replace(/\D/g, '');
+    
+    return caixa(<>
+        <div style={{fontSize:'3rem'}}>🛵</div>
+        <h2 style={{fontWeight:'900',marginBottom:'1rem'}}>Entrega #{String(d.id).slice(-5)}</h2>
+        <div style={{textAlign:'left',background:'var(--background)',borderRadius:'12px',padding:'1rem',marginBottom:'1rem',lineHeight:1.7}}>
+            <div><strong>👤 {d.customerName}</strong></div>
+            <div>📍 {d.address}</div>
+            {d.referencia && <div>🗺️ {d.referencia}</div>}
+            {tel && <div>📞 <a href={'tel:' + tel} style={{color:'#3498db',fontWeight:'700'}}>{d.phone}</a></div>}
+            <div style={{marginTop:'0.5rem',fontWeight:'900',color:'#e67e22',fontSize:'1.3rem'}}>{config.currency} {(d.total || 0).toFixed(2)}</div>
+            <div>{pagto}</div>
+        </div>
+        <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(d.address || '')} target="_blank" rel="noopener noreferrer"
+           style={{display:'block',padding:'0.9rem',marginBottom:'1rem',border:'2px solid #3498db',borderRadius:'12px',color:'#3498db',fontWeight:'800',textDecoration:'none'}}>🗺️ ABRIR NO MAPA</a>
+        {d.chegouEm ? (
+            <div style={{padding:'1.2rem',background:'rgba(74,157,78,0.15)',border:'2px solid #4a9d4e',borderRadius:'12px',fontWeight:'800',color:'#4a9d4e'}}>
+                ✅ Cliente avisado às {new Date(d.chegouEm).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
+                <div style={{fontSize:'0.85rem',fontWeight:'600',marginTop:'0.3rem',color:'var(--text-secondary)'}}>Aguarde o cliente confirmar o recebimento.</div>
+            </div>
+        ) : (
+            <button onClick={avisar} style={{width:'100%',padding:'1.6rem',background:'linear-gradient(135deg,#4a9d4e,#45a049)',border:'none',borderRadius:'16px',color:'#fff',fontWeight:'900',fontSize:'1.5rem',cursor:'pointer',boxShadow:'0 6px 20px rgba(74,157,78,0.4)'}}>
+                📍 ESTOU AQUI
+            </button>
+        )}
+    </>, '#3498db');
+}
+
 function DeliveryPublico({config, theme, toggleTheme}) {
     const [products, setProducts]   = useState([]);
     const [cart, setCart]           = useState([]);
@@ -703,6 +781,7 @@ function DeliveryPublico({config, theme, toggleTheme}) {
     const [pedidoId, setPedidoId]   = useState(null);
     const [pedidoStatus, setPedidoStatus] = useState('pendente');
     const [pedidoData, setPedidoData] = useState(null);
+    const chegouAvisado = useRef(false);
     const [form, setForm] = useState({
         nome:'', telefone:'', endereco:'', referencia:'', pagamento:'dinheiro', troco:'', taxa:''
     });
@@ -722,6 +801,10 @@ function DeliveryPublico({config, theme, toggleTheme}) {
             if (s.val()) {
                 setPedidoStatus(s.val().status || 'pendente');
                 setPedidoData(s.val());
+                if (s.val().chegouEm && !chegouAvisado.current) {
+                    chegouAvisado.current = true;
+                    try { playSound('delivery'); } catch (e) {}
+                }
             }
         });
         return () => ref.off('value', cb);
@@ -784,7 +867,10 @@ function DeliveryPublico({config, theme, toggleTheme}) {
 
     // ─── STEP 3: Rastreamento ───
     if (step === 3) {
-        const info = statusInfo[pedidoStatus] || statusInfo['pendente'];
+        const chegou = pedidoStatus === 'saiu' && pedidoData && pedidoData.chegouEm;
+        const info = chegou
+            ? {icon:'📍', label:'O entregador chegou! Está na frente da sua casa', color:'#4a9d4e', prog:95}
+            : (statusInfo[pedidoStatus] || statusInfo['pendente']);
         
         // Calcular tempo restante se saiu
         let tempoRestante = null;
@@ -1217,6 +1303,7 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
     const [ask, setAsk] = useState(false);
     const [cardapioPublico, setCardapioPublico] = useState(false);
     const [deliveryPublico, setDeliveryPublico] = useState(false);
+    const [entregadorPublico, setEntregadorPublico] = useState(null);
     
     // Detectar acesso via QR Code ou link
     useEffect(() => {
@@ -1224,6 +1311,13 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
         const mesaParam    = urlParams.get('mesa');
         const cardapioParam = urlParams.get('cardapio');
         const deliveryParam = urlParams.get('delivery');
+        const entregadorParam = urlParams.get('entregador');
+        
+        // Tela do entregador (link individual com token)
+        if (entregadorParam) {
+            setEntregadorPublico({id: entregadorParam, k: urlParams.get('k') || ''});
+            return;
+        }
         
         // Cardápio público via QR
         if (cardapioParam === '1') {
@@ -1317,6 +1411,11 @@ function Login({config, tables, waiters, setUser, setView, theme, toggleTheme}) 
     // Cardápio público (acesso via QR sem login)
     if (cardapioPublico) {
         return <CardapioPublico config={config} tables={tables} setUser={setUser} setView={setView} theme={theme} toggleTheme={toggleTheme} />;
+    }
+    
+    // Entregador (acesso via link individual, sem login)
+    if (entregadorPublico) {
+        return <EntregadorPublico entregaId={entregadorPublico.id} token={entregadorPublico.k} config={config} theme={theme} toggleTheme={toggleTheme} />;
     }
     
     // Delivery público (acesso via link sem login)
@@ -4488,6 +4587,8 @@ function DeliveryTab({deliveries, products, config, onNew}) {
         
         db.ref(`deliveries/${tempoModal.id}`).update({
             status: 'saiu',
+            tokenEntregador: gerarTokenEntregador(),
+            chegouEm: null,
             horaSaida,
             tempoEstimado: tempoMinutos,
             horaChegadaEstimada: horaChegada
@@ -4568,6 +4669,11 @@ function DeliveryTab({deliveries, products, config, onNew}) {
                                         fontWeight:'800',
                                         color:'#fff'
                                     }}>{statusLabel[d.status]}</span>
+                                    {d.status === 'saiu' && d.chegouEm && (
+                                        <span style={{padding:'0.4rem 1rem',background:'#4a9d4e',borderRadius:'20px',fontSize:'0.85rem',fontWeight:'800',color:'#fff'}}>
+                                            📍 ENTREGADOR CHEGOU {new Date(d.chegouEm).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
+                                        </span>
+                                    )}
                                     <span style={{color:'var(--text-secondary)',fontSize:'0.85rem'}}>
                                         #{String(d.id).slice(-5)} · {new Date(d.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
                                     </span>
@@ -4605,6 +4711,21 @@ function DeliveryTab({deliveries, products, config, onNew}) {
                         
                         {/* Ações */}
                         <div style={{display:'flex',gap:'1rem',flexWrap:'wrap'}}>
+                            {d.status === 'saiu' && !d.tokenEntregador && (
+                                <button onClick={() => db.ref('deliveries/' + d.id + '/tokenEntregador').set(gerarTokenEntregador())}
+                                    style={{flexBasis:'100%',padding:'0.8rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>🔗 GERAR LINK DO ENTREGADOR</button>
+                            )}
+                            {d.status === 'saiu' && d.tokenEntregador && (
+                                <div style={{flexBasis:'100%',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.7rem'}}>
+                                    <button onClick={() => {
+                                        const url = linkEntregador(d);
+                                        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(() => alert('✅ Link do entregador copiado!\n\n' + url)).catch(() => prompt('Copie o link do entregador:', url));
+                                        else prompt('Copie o link do entregador:', url);
+                                    }} style={{padding:'0.8rem',background:'#3498db',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>🔗 LINK DO ENTREGADOR</button>
+                                    <button onClick={() => window.open('https://wa.me/?text=' + encodeURIComponent('🛵 Entrega #' + String(d.id).slice(-5) + ' - ' + d.customerName + '\n📍 ' + d.address + '\nAo chegar, toque em ESTOU AQUI:\n' + linkEntregador(d)), '_blank')}
+                                        style={{padding:'0.8rem',background:'#25d366',border:'none',borderRadius:'10px',color:'#fff',fontWeight:'800',cursor:'pointer'}}>📲 ENVIAR NO WHATSAPP</button>
+                                </div>
+                            )}
                             {nextStatus[d.status] && (
                                 <button onClick={() => advanceStatus(d)} style={{
                                     flex:1,padding:'1rem',
